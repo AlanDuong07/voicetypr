@@ -1,6 +1,9 @@
 use crate::commands::audio::{start_recording, stop_recording, RecorderState};
 use crate::recording::escape_handler::handle_escape_key_press;
-use crate::{get_recording_state, update_recording_state, AppState, RecordingMode, RecordingState};
+use crate::{
+    get_recording_state, update_recording_state, AppState, RecordingMode, RecordingState,
+};
+use crate::state::VoiceOutputMode;
 use std::sync::atomic::Ordering;
 use tauri::Manager;
 use tauri_plugin_global_shortcut::{Shortcut, ShortcutState};
@@ -57,15 +60,36 @@ pub fn handle_global_shortcut(
         }
     };
 
+    let is_computer_use_shortcut = {
+        if let Ok(shortcut_guard) = app_state.computer_use_shortcut.lock() {
+            if let Some(ref computer_use_shortcut) = *shortcut_guard {
+                shortcut == computer_use_shortcut
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    };
+
     let should_handle = match recording_mode {
         RecordingMode::Toggle => is_recording_shortcut && event_state == ShortcutState::Pressed,
         RecordingMode::PushToTalk => is_recording_shortcut || is_ptt_shortcut,
     };
 
-    if should_handle {
+    if is_computer_use_shortcut && event_state == ShortcutState::Pressed {
+        if let Ok(mut mode_guard) = app_state.voice_output_mode.lock() {
+            *mode_guard = VoiceOutputMode::ComputerUse;
+        }
+        let current_state = get_recording_state(app);
+        handle_toggle_mode(app, &app_state, current_state, event_state);
+    } else if should_handle {
+        if let Ok(mut mode_guard) = app_state.voice_output_mode.lock() {
+            *mode_guard = VoiceOutputMode::Dictation;
+        }
         let current_state = get_recording_state(app);
         handle_recording_shortcut(app, &app_state, recording_mode, current_state, event_state);
-    } else if !is_recording_shortcut && !is_ptt_shortcut {
+    } else if !is_recording_shortcut && !is_ptt_shortcut && !is_computer_use_shortcut {
         handle_non_recording_shortcut(app, shortcut, event_state);
     }
 }

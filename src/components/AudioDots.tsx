@@ -1,7 +1,7 @@
 import { motion } from "framer-motion";
 import { useEffect, useRef, useState } from "react";
 
-type DotState = "idle" | "listening" | "transcribing" | "formatting";
+type DotState = "idle" | "listening" | "transcribing" | "formatting" | "task_running" | "task_success";
 
 interface AudioDotsProps {
   state: DotState;
@@ -112,9 +112,10 @@ export function AudioDots({ state, audioLevel = 0 }: AudioDotsProps) {
   const containerHeight = isActive ? ACTIVE_CONTAINER_HEIGHT : IDLE_CONTAINER_HEIGHT;
 
   // Check if we should show pulsing animation (transcribing or formatting)
-  const shouldPulse = state === "transcribing" || state === "formatting";
+  const shouldPulse =
+    state === "transcribing" || state === "formatting" || state === "task_running";
   // Formatting pulses faster than transcribing
-  const pulseDuration = state === "formatting" ? 0.8 : 1.2;
+  const pulseDuration = state === "formatting" ? 0.8 : state === "task_running" ? 0.7 : 1.2;
 
   return (
     <motion.div
@@ -130,7 +131,7 @@ export function AudioDots({ state, audioLevel = 0 }: AudioDotsProps) {
       {Array.from({ length: DOT_COUNT }).map((_, i) => (
         <motion.div
           key={i}
-          className="bg-white rounded-full"
+          className="rounded-full"
           animate={{
             // Dot size changes between idle and active
             width: dotSize,
@@ -138,6 +139,7 @@ export function AudioDots({ state, audioLevel = 0 }: AudioDotsProps) {
             height: state === "listening" ? dotSize * heights[i] : dotSize,
             // Pulsing opacity for transcribing and formatting states
             opacity: shouldPulse ? [0.95, 0.4, 0.95] : 0.95,
+            backgroundColor: state === "task_success" ? "#22c55e" : "#ffffff",
           }}
           transition={{
             width: { duration: 0.25, ease: "easeOut" },
@@ -156,6 +158,9 @@ export function AudioDots({ state, audioLevel = 0 }: AudioDotsProps) {
               : {
                   duration: 0.2,
                 },
+            backgroundColor: {
+              duration: 0.2,
+            },
           }}
         />
       ))}

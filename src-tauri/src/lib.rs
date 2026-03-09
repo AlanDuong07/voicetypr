@@ -15,6 +15,8 @@ use crate::utils::logger::*;
 mod ai;
 mod audio;
 mod commands;
+mod cyberdriver;
+mod error;
 mod ffmpeg;
 mod license;
 mod media;
@@ -56,6 +58,7 @@ use commands::{
     },
     audio::*,
     clipboard::{copy_image_to_clipboard, save_image_to_file},
+    cyberdriver::*,
     debug::{debug_transcription_flow, test_transcription_event},
     device::get_device_id,
     keyring::{keyring_delete, keyring_get, keyring_has, keyring_set},
@@ -254,7 +257,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 
                 // Try to save panic info to a crash file for debugging
                 if let Ok(home_dir) = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")) {
-                    let crash_file = std::path::Path::new(&home_dir).join(".voicetypr_crash.log");
+                    let crash_file = std::path::Path::new(&home_dir).join(".cyberdriver_crash.log");
                     let _ = std::fs::write(&crash_file, format!(
                         "Panic at {}: {}\nFull info: {:?}\nTime: {:?}",
                         location, message, panic_info, chrono::Local::now()
@@ -363,6 +366,22 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             // Initialize unified application state
             app.manage(AppState::new());
             log::info!("🧠 App state managed and ready");
+
+            // Initialize Cyberdriver runtime alongside the existing VoiceTypr state.
+            match cyberdriver::CyberdriverRuntime::new(app.app_handle().clone()) {
+                Ok(runtime) => {
+                    app.manage(tokio::sync::Mutex::new(runtime));
+                    cyberdriver::prime_permissions();
+                    log::info!("🤖 Cyberdriver runtime initialized");
+                }
+                Err(e) => {
+                    log::error!("Failed to initialize Cyberdriver runtime: {}", e);
+                    return Err(Box::new(std::io::Error::other(format!(
+                        "Failed to initialize Cyberdriver runtime: {}",
+                        e
+                    ))));
+                }
+            }
 
             // Initialize window manager after app state is managed
             let app_state = app.state::<AppState>();
@@ -481,7 +500,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 
             let _tray = TrayIconBuilder::with_id("main")
                 .icon(tray_icon)
-                .tooltip("VoiceTypr")
+                .tooltip("Cyberdriver")
                 .menu(&menu)
                 .on_menu_event(move |app, event| {
                     log::info!("Tray menu event: {:?}", event.id);
@@ -819,6 +838,46 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
+            // Register computer use shortcut separately from dictation.
+            if let Ok(store) = app.store("settings") {
+                if let Some(computer_use_hotkey) = store
+                    .get("computer_use_hotkey")
+                    .and_then(|v| v.as_str().map(|s| s.to_string()))
+                    .filter(|s| !s.trim().is_empty())
+                {
+                    let normalized = crate::commands::key_normalizer::normalize_shortcut_keys(&computer_use_hotkey);
+                    match normalized.parse::<tauri_plugin_global_shortcut::Shortcut>() {
+                        Ok(shortcut) => {
+                            if let Ok(mut guard) = app_state.computer_use_shortcut.lock() {
+                                *guard = Some(shortcut);
+                            }
+                            if let Err(e) = app.global_shortcut().register(shortcut) {
+                                log::warn!(
+                                    "Failed to register computer use hotkey '{}': {}",
+                                    computer_use_hotkey,
+                                    e
+                                );
+                                if let Ok(mut guard) = app_state.computer_use_shortcut.lock() {
+                                    *guard = None;
+                                }
+                            } else {
+                                log::info!(
+                                    "✅ Successfully registered computer use hotkey: {}",
+                                    computer_use_hotkey
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!(
+                                "Invalid computer use hotkey '{}': {}",
+                                computer_use_hotkey,
+                                e
+                            );
+                        }
+                    }
+                }
+            }
+
             // Preload current model if set (graceful degradation)
             // Use Tauri's async runtime which is available after setup
             if let Ok(store) = app.store("settings") {
@@ -1109,6 +1168,17 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             get_log_directory,
             open_logs_folder,
             get_device_id,
+            get_cyberdriver_status,
+            start_local_api,
+            stop_local_api,
+            connect_tunnel,
+            disconnect_tunnel,
+            update_cyberdriver_settings,
+            get_cyberdriver_settings,
+            clear_cyberdriver_config,
+            install_persistent_display,
+            get_cyberdriver_log_dir,
+            get_recent_logs,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
@@ -1133,7 +1203,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 ("stage", "application_build"),
                 ("total_startup_time_ms", app_start.elapsed().as_millis().to_string().as_str())
             ]);
-            eprintln!("VoiceTypr failed to start: {}", e);
+            eprintln!("Cyberdriver failed to start: {}", e);
             Box::new(e)
         })?
         .run(|app_handle, event| {

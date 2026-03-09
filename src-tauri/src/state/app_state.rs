@@ -27,6 +27,12 @@ pub enum RecordingMode {
     PushToTalk,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VoiceOutputMode {
+    Dictation,
+    ComputerUse,
+}
+
 /// Queued event for the pill window
 #[derive(Debug, Clone)]
 pub struct QueuedPillEvent {
@@ -38,9 +44,11 @@ pub struct QueuedPillEvent {
 pub struct AppState {
     pub recording_state: UnifiedRecordingState,
     pub recording_shortcut: Arc<Mutex<Option<tauri_plugin_global_shortcut::Shortcut>>>,
+    pub computer_use_shortcut: Arc<Mutex<Option<tauri_plugin_global_shortcut::Shortcut>>>,
     pub current_recording_path: Arc<Mutex<Option<PathBuf>>>,
     pub transcription_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
     pub recording_mode: Arc<Mutex<RecordingMode>>,
+    pub voice_output_mode: Arc<Mutex<VoiceOutputMode>>,
     pub ptt_key_held: Arc<AtomicBool>,
     pub ptt_shortcut: Arc<Mutex<Option<tauri_plugin_global_shortcut::Shortcut>>>,
     pub should_cancel_recording: Arc<AtomicBool>,
@@ -66,9 +74,11 @@ impl AppState {
         Self {
             recording_state: UnifiedRecordingState::new(),
             recording_shortcut: Arc::new(Mutex::new(None)),
+            computer_use_shortcut: Arc::new(Mutex::new(None)),
             current_recording_path: Arc::new(Mutex::new(None)),
             transcription_task: Arc::new(Mutex::new(None)),
             recording_mode: Arc::new(Mutex::new(RecordingMode::Toggle)),
+            voice_output_mode: Arc::new(Mutex::new(VoiceOutputMode::Dictation)),
             ptt_key_held: Arc::new(AtomicBool::new(false)),
             ptt_shortcut: Arc::new(Mutex::new(None)),
             should_cancel_recording: Arc::new(AtomicBool::new(false)),

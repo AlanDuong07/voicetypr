@@ -1,7 +1,6 @@
 import { useAccessibilityPermission } from './useAccessibilityPermission';
 import { useMicrophonePermission } from './useMicrophonePermission';
 import { useModelAvailability } from './useModelAvailability';
-import { useLicenseStatus } from './useLicenseStatus';
 import { useSettings } from '@/contexts/SettingsContext';
 
 /**
@@ -15,8 +14,6 @@ export function useAppReadiness() {
   const accessibility = useAccessibilityPermission({ checkOnMount: onboardingCompleted });
   const microphone = useMicrophonePermission({ checkOnMount: onboardingCompleted });
   const models = useModelAvailability();
-  const license = useLicenseStatus();
-
   // Compute derived values
   const canRecord = Boolean(
     microphone.hasPermission && 
@@ -38,11 +35,9 @@ export function useAppReadiness() {
     accessibility.isChecking ||
     microphone.isChecking ||
     models.isChecking ||
-    license.isChecking ||
     accessibility.hasPermission === null ||
     microphone.hasPermission === null ||
-    models.hasModels === null ||
-    license.licenseStatus === null
+    models.hasModels === null
   );
 
   return {
@@ -51,7 +46,7 @@ export function useAppReadiness() {
     hasMicrophonePermission: microphone.hasPermission,
     hasModels: models.hasModels,
     selectedModelAvailable: models.selectedModelAvailable,
-    licenseValid: license.isValid,
+    licenseValid: true,
 
     // Computed values
     canRecord,
@@ -65,6 +60,6 @@ export function useAppReadiness() {
     checkAccessibilityPermission: accessibility.checkPermission,
     checkMicrophonePermission: microphone.checkPermission,
     checkModels: models.checkModels,
-    checkLicense: license.checkLicense,
+    checkLicense: async () => {},
   };
 }

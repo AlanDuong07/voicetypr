@@ -2,12 +2,11 @@ use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::audio::recorder::AudioRecorder;
-use crate::commands::license::check_license_status_internal;
 use crate::commands::settings::{get_settings, resolve_pill_indicator_mode, Settings};
-use crate::license::LicenseState;
 use crate::media::MediaPauseController;
 use crate::parakeet::messages::ParakeetResponse;
 use crate::parakeet::ParakeetManager;
+use crate::state::VoiceOutputMode;
 use crate::utils::logger::*;
 #[cfg(debug_assertions)]
 use crate::utils::system_monitor;
@@ -78,6 +77,34 @@ pub fn pill_toast(app: &AppHandle, message: &str, duration_ms: u64) {
     };
 
     let _ = app.emit("toast", payload);
+}
+
+async fn submit_computer_use_task(app: &AppHandle, task: &str) -> Result<(), String> {
+    let cyberdriver_settings = crate::cyberdriver::CyberdriverSettings::from_store(app)
+        .map_err(|e| format!("Failed to load Cyberdriver settings: {e:?}"))?;
+    let machine_id = crate::cyberdriver::current_machine_id()
+        .map_err(|e| format!("Failed to resolve machine ID: {e:?}"))?;
+
+    if cyberdriver_settings.secret.trim().is_empty() {
+        return Err("Cyberdesk API key is missing.".to_string());
+    }
+
+    reqwest::Client::new()
+        .post(format!(
+            "https://api.cyberdesk.io/v1/computer/{}/task",
+            machine_id
+        ))
+        .bearer_auth(cyberdriver_settings.secret)
+        .json(task)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to submit computer task: {e}"))?
+        .error_for_status()
+        .map_err(|e| format!("Computer task request failed: {e}"))?;
+
+    let _ = app.emit("computer-task-started", serde_json::json!({ "task": task }));
+    let _ = app.emit("computer-task-state", "running");
+    Ok(())
 }
 
 fn should_hide_pill_when_idle(mode: &str) -> bool {
@@ -577,74 +604,6 @@ async fn validate_recording_requirements(app: &AppHandle) -> Result<(), String> 
                 "No speech recognition models installed. Please download a model first.".to_string()
             },
         );
-    }
-
-    // Check license status (with caching to improve performance)
-    let license_status = {
-        let app_state = app.state::<AppState>();
-        let cache = app_state.license_cache.read().await;
-
-        if let Some(cached) = cache.as_ref() {
-            if cached.is_valid() {
-                log::debug!("Using cached license status (age: {:?})", cached.age());
-                Some(cached.status.clone())
-            } else {
-                log::debug!(
-                    "License cache is stale (age: {:?}), will refresh",
-                    cached.age()
-                );
-                None
-            }
-        } else {
-            log::debug!("No license cache found, will perform fresh check");
-            None
-        }
-    };
-
-    let status = if let Some(cached_status) = license_status {
-        cached_status
-    } else {
-        // Cache miss or stale - perform fresh license check
-        match check_license_status_internal(app).await {
-            Ok(fresh_status) => {
-                // Update cache
-                let app_state = app.state::<AppState>();
-                let mut cache = app_state.license_cache.write().await;
-                *cache = Some(crate::commands::license::CachedLicense::new(
-                    fresh_status.clone(),
-                ));
-                log::debug!("License status cached for 6 hours");
-                fresh_status
-            }
-            Err(e) => {
-                log::error!("Failed to check license status: {}", e);
-                // Allow recording if license check fails (graceful degradation)
-                return Ok(());
-            }
-        }
-    };
-
-    if matches!(status.status, LicenseState::Expired | LicenseState::None) {
-        log::error!("Invalid license: {:?}", status.status);
-
-        // Show and focus the main window
-        if let Some(window) = app.get_webview_window("main") {
-            let _ = window.show();
-            let _ = window.set_focus();
-        }
-
-        // Emit error event with guidance
-        let _ = emit_to_window(
-            app,
-            "main",
-            "license-required",
-            serde_json::json!({
-                "title": "License Required",
-                "message": "Your trial has expired. Please purchase a license to continue",
-                "action": "purchase"
-            }),
-        );
-        return Err("License required to record".to_string());
     }
 
     Ok(())
@@ -1825,6 +1784,12 @@ pub async fn stop_recording(
                 let text_for_process = text.clone();
                 let model_for_process = selected_model_name_for_task.clone();
                 let ai_enabled_for_task = ai_enabled; // Capture from cached config
+                let output_mode = app_for_task
+                    .state::<AppState>()
+                    .voice_output_mode
+                    .lock()
+                    .map(|guard| *guard)
+                    .unwrap_or(VoiceOutputMode::Dictation);
 
                 tokio::spawn(async move {
                     // 1. Process the transcription and enhancement
@@ -1899,49 +1864,61 @@ pub async fn stop_recording(
                         }
                     };
 
-                    // 2. Hide pill window first, then insert text with reduced delay
                     let app_state = app_for_process.state::<AppState>();
-
-                    // Hide pill window first (only if show_pill_indicator is false)
-                    if should_hide_pill(&app_for_process).await {
-                        if let Some(window_manager) = app_state.get_window_manager() {
-                            if let Err(e) = window_manager.hide_pill_window().await {
-                                log::error!("Failed to hide pill window: {}", e);
+                    match output_mode {
+                        VoiceOutputMode::Dictation => {
+                            // Hide pill window first (only if show_pill_indicator is false)
+                            if should_hide_pill(&app_for_process).await {
+                                if let Some(window_manager) = app_state.get_window_manager() {
+                                    if let Err(e) = window_manager.hide_pill_window().await {
+                                        log::error!("Failed to hide pill window: {}", e);
+                                    }
+                                } else {
+                                    log::error!("WindowManager not initialized");
+                                }
                             }
-                        } else {
-                            log::error!("WindowManager not initialized");
+
+                            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+                            match crate::commands::text::insert_text(
+                                app_for_process.clone(),
+                                final_text.clone(),
+                            )
+                            .await
+                            {
+                                Ok(_) => log::debug!("Text inserted at cursor successfully"),
+                                Err(e) => {
+                                    log::error!("Failed to insert text: {}", e);
+
+                                    if e.contains("accessibility") || e.contains("permission") {
+                                        pill_toast(
+                                            &app_for_process,
+                                            "Text copied - grant permission to auto-paste",
+                                            1500,
+                                        );
+                                    } else {
+                                        pill_toast(
+                                            &app_for_process,
+                                            "Paste failed - text in clipboard",
+                                            1500,
+                                        );
+                                    }
+                                }
+                            }
                         }
-                    }
-
-                    // Reduced delay to ensure UI is stable (was 100ms, now 50ms)
-                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-
-                    // Now handle text insertion with stable UI
-                    match crate::commands::text::insert_text(
-                        app_for_process.clone(),
-                        final_text.clone(),
-                    )
-                    .await
-                    {
-                        Ok(_) => log::debug!("Text inserted at cursor successfully"),
-                        Err(e) => {
-                            log::error!("Failed to insert text: {}", e);
-
-                            // Check if it's an accessibility permission issue
-                            if e.contains("accessibility") || e.contains("permission") {
-                                // Show pill toast for accessibility permission error
-                                pill_toast(
-                                    &app_for_process,
-                                    "Text copied - grant permission to auto-paste",
-                                    1500,
-                                );
-                            } else {
-                                // Generic paste error
-                                pill_toast(
-                                    &app_for_process,
-                                    "Paste failed - text in clipboard",
-                                    1500,
-                                );
+                        VoiceOutputMode::ComputerUse => {
+                            match submit_computer_use_task(&app_for_process, &final_text).await {
+                                Ok(_) => {
+                                    log::info!("Computer use task submitted successfully");
+                                }
+                                Err(e) => {
+                                    log::error!("Failed to submit computer use task: {}", e);
+                                    pill_toast(&app_for_process, "Task submission failed", 1500);
+                                    let _ = app_for_process.emit(
+                                        "computer-task-failed",
+                                        serde_json::json!({ "error": e.clone() }),
+                                    );
+                                }
                             }
                         }
                     }
@@ -1969,6 +1946,9 @@ pub async fn stop_recording(
                     });
 
                     // 6. Transition to idle state
+                    if let Ok(mut mode_guard) = app_state.voice_output_mode.lock() {
+                        *mode_guard = VoiceOutputMode::Dictation;
+                    }
                     update_recording_state(&app_for_process, RecordingState::Idle, None);
                 });
             }

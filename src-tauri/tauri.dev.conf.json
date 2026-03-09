@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Voicetypr",
+  "productName": "Cyberdriver",
   "version": "1.10.0",
-  "identifier": "com.ideaplexa.voicetypr.dev",
+  "identifier": "io.cyberdesk.cyberdriver.dev",
   "build": {
     "beforeDevCommand": "pnpm run sidecar:ensure-ffmpeg && pnpm dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Voicetypr",
+        "title": "Cyberdriver",
         "label": "main",
         "width": 800,
         "height": 600,
@@ -32,7 +32,7 @@
         "style-src": "'self' 'unsafe-inline'",
         "img-src": "'self' asset: data:",
         "font-src": "'self'",
-        "connect-src": "'self' ipc: https://voicetypr.com https://api.voicetypr.com https://github.com asset:",
+        "connect-src": "'self' ipc: https://api.cyberdesk.io https://github.com asset:",
         "media-src": "'self'"
       }
     }

@@ -2,14 +2,14 @@ import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AppErrorBoundary } from "./ErrorBoundary";
+import { CyberdriverOnboarding } from "./onboarding/CyberdriverOnboarding";
 import { Sidebar } from "./Sidebar";
-import { OnboardingDesktop } from "./onboarding/OnboardingDesktop";
 import { SidebarInset, SidebarProvider } from "./ui/sidebar";
 import { TabContainer } from "./tabs/TabContainer";
 import { useReadiness } from "@/contexts/ReadinessContext";
+import { useCyberdriver } from "@/contexts/CyberdriverContext";
 import { useSettings } from "@/contexts/SettingsContext";
 import { useEventCoordinator } from "@/hooks/useEventCoordinator";
-import { useModelManagementContext } from "@/contexts/ModelManagementContext";
 import { updateService } from "@/services/updateService";
 import { loadApiKeysToCache } from "@/utils/keyring";
 
@@ -27,13 +27,11 @@ interface ErrorEventPayload {
 
 export function AppContainer() {
   const { registerEvent } = useEventCoordinator("main");
-  const [activeSection, setActiveSection] = useState<string>("overview");
+  const [activeSection, setActiveSection] = useState<string>("home");
   const [showOnboarding, setShowOnboarding] = useState(false);
   const { settings, refreshSettings } = useSettings();
+  const { settings: cyberdriverSettings } = useCyberdriver();
   const { checkAccessibilityPermission, checkMicrophonePermission } = useReadiness();
-
-  // Use the model management context for onboarding
-  const modelManagement = useModelManagementContext();
 
   // Use a ref to track if we've just completed onboarding
   const hasJustCompletedOnboarding = useRef(false);
@@ -43,7 +41,7 @@ export function AppContainer() {
     const init = async () => {
       try {
         // Check if onboarding is completed - only check when settings are loaded
-        if (settings && !settings.onboarding_completed) {
+        if (settings && (!settings.onboarding_completed || !cyberdriverSettings?.secret)) {
           setShowOnboarding(true);
         }
 
@@ -77,7 +75,7 @@ export function AppContainer() {
         // Listen for navigate-to-settings event from tray menu
         registerEvent("navigate-to-settings", () => {
           console.log("Navigate to settings requested from tray menu");
-          setActiveSection("overview");
+          setActiveSection("settings");
         });
 
         // Listen for manual update checks triggered from tray
@@ -107,21 +105,6 @@ export function AppContainer() {
           });
         });
 
-        // Listen for license-required event and navigate to License section
-        registerEvent<{ title: string; message: string; action?: string }>(
-          "license-required", 
-          (data) => {
-            console.log("License required event received in AppContainer:", data);
-            // Navigate to License section to show license management
-            setActiveSection("license");
-            // Show a toast to inform the user
-            toast.error(data.title || "License Required", {
-              description: data.message || "Please purchase or restore a license to continue",
-              duration: 5000
-            });
-          }
-        );
-
         // Listen for no models error (when trying to record without any models)
         registerEvent<ErrorEventPayload>("no-models-error", (data) => {
           console.error("No models available:", data);
@@ -143,7 +126,7 @@ export function AppContainer() {
     };
 
     init();
-  }, [registerEvent, settings]);
+  }, [cyberdriverSettings?.secret, registerEvent, settings]);
 
   // Mark when onboarding is being shown
   useEffect(() => {
@@ -176,13 +159,12 @@ export function AppContainer() {
   if (showOnboarding) {
     return (
       <AppErrorBoundary>
-        <OnboardingDesktop
+        <CyberdriverOnboarding
           onComplete={() => {
             setShowOnboarding(false);
             // Reload settings after onboarding
             refreshSettings();
           }}
-          modelManagement={modelManagement}
         />
       </AppErrorBoundary>
     );

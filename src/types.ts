@@ -43,6 +43,7 @@ export type PillIndicatorPosition = 'top-left' | 'top-center' | 'top-right' | 'b
 
 export interface AppSettings {
   hotkey: string;
+  computer_use_hotkey?: string;
   current_model: string;
   language: string;
   translate_to_english?: boolean;

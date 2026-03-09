@@ -18,6 +18,7 @@ pub const DEFAULT_INDICATOR_OFFSET: u32 = 10;
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Settings {
     pub hotkey: String,
+    pub computer_use_hotkey: String,
     pub current_model: String,
     pub current_model_engine: String,
     pub language: String,
@@ -51,6 +52,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             hotkey: "CommandOrControl+Shift+Space".to_string(),
+            computer_use_hotkey: "Option+Space".to_string(),
             current_model: "".to_string(), // Empty means auto-select
             current_model_engine: "whisper".to_string(),
             language: "en".to_string(),
@@ -148,6 +150,10 @@ pub async fn get_settings(app: AppHandle) -> Result<Settings, String> {
             .get("hotkey")
             .and_then(|v| v.as_str().map(|s| s.to_string()))
             .unwrap_or_else(|| Settings::default().hotkey),
+        computer_use_hotkey: store
+            .get("computer_use_hotkey")
+            .and_then(|v| v.as_str().map(|s| s.to_string()))
+            .unwrap_or_else(|| Settings::default().computer_use_hotkey),
         current_model: store
             .get("current_model")
             .and_then(|v| v.as_str().map(|s| s.to_string()))
@@ -280,6 +286,7 @@ pub async fn save_settings(app: AppHandle, settings: Settings) -> Result<(), Str
         .unwrap_or_else(|| Settings::default().pill_indicator_offset);
 
     store.set("hotkey", json!(settings.hotkey));
+    store.set("computer_use_hotkey", json!(settings.computer_use_hotkey));
     store.set("current_model", json!(settings.current_model));
     store.set("current_model_engine", json!(settings.current_model_engine));
 
@@ -396,6 +403,38 @@ pub async fn save_settings(app: AppHandle, settings: Settings) -> Result<(), Str
                 let _ = app.global_shortcut().unregister(old_ptt);
             }
             *ptt_guard = None;
+        }
+    }
+
+    // Handle computer use shortcut registration.
+    let shortcuts = app.global_shortcut();
+    if let Ok(mut computer_use_guard) = app_state.computer_use_shortcut.lock() {
+        if let Some(old_shortcut) = *computer_use_guard {
+            let _ = shortcuts.unregister(old_shortcut);
+        }
+        *computer_use_guard = None;
+    }
+
+    if !settings.computer_use_hotkey.trim().is_empty() {
+        let normalized_computer_use =
+            crate::commands::key_normalizer::normalize_shortcut_keys(&settings.computer_use_hotkey);
+        if let Ok(computer_use_shortcut) =
+            normalized_computer_use.parse::<tauri_plugin_global_shortcut::Shortcut>()
+        {
+            match shortcuts.register(computer_use_shortcut) {
+                Ok(_) => {
+                    if let Ok(mut computer_use_guard) = app_state.computer_use_shortcut.lock() {
+                        *computer_use_guard = Some(computer_use_shortcut);
+                    }
+                    log::info!(
+                        "Computer use shortcut updated to: {}",
+                        settings.computer_use_hotkey
+                    );
+                }
+                Err(e) => {
+                    log::error!("Failed to register computer use shortcut: {}", e);
+                }
+            }
         }
     }
 

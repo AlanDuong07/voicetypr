@@ -1,7 +1,7 @@
 import { Toaster } from "sonner";
 import { AppErrorBoundary } from "./components/ErrorBoundary";
 import { AppContainer } from "./components/AppContainer";
-import { LicenseProvider } from "./contexts/LicenseContext";
+import { CyberdriverProvider } from "./contexts/CyberdriverContext";
 import { ReadinessProvider } from "./contexts/ReadinessContext";
 import { SettingsProvider } from "./contexts/SettingsContext";
 import { ModelManagementProvider } from "./contexts/ModelManagementContext";
@@ -9,7 +9,7 @@ import { ModelManagementProvider } from "./contexts/ModelManagementContext";
 export default function App() {
   return (
     <AppErrorBoundary>
-      <LicenseProvider>
+      <CyberdriverProvider>
         <SettingsProvider>
           <ReadinessProvider>
             <ModelManagementProvider>
@@ -18,7 +18,7 @@ export default function App() {
             </ModelManagementProvider>
           </ReadinessProvider>
         </SettingsProvider>
-      </LicenseProvider>
+      </CyberdriverProvider>
     </AppErrorBoundary>
   );
 }
