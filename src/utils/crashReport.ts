@@ -54,7 +54,7 @@ export async function gatherCrashReportData(
 }
 
 export function generateGitHubIssueUrl(data: CrashReportData): string {
-  const repo = 'moinulmoin/voicetypr';
+  const repo = 'cyberdeskai/cyberdriver';
   const title = `[Crash Report] ${truncate(data.errorMessage, 80)}`;
 
   const body = `## Crash Report

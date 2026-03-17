@@ -1086,17 +1086,19 @@ pub async fn start_recording(
         }
     });
 
-    // If a toggle-stop was requested while starting, honor it immediately after entering Recording
+    // If a stop was requested while starting, honor it immediately after entering Recording.
+    // This is used by both toggle hotkeys and push-to-talk release events that arrive
+    // before startup has fully completed.
     if app_state
         .pending_stop_after_start
         .swap(false, std::sync::atomic::Ordering::SeqCst)
     {
-        log::info!("Toggle: pending stop triggered right after start; stopping now");
+        log::info!("Pending stop triggered right after start; stopping now");
         let app_handle = app.clone();
         tauri::async_runtime::spawn(async move {
             let recorder_state = app_handle.state::<RecorderState>();
             if let Err(e) = stop_recording(app_handle.clone(), recorder_state).await {
-                log::error!("Toggle: pending stop failed: {}", e);
+                log::error!("Pending stop after start failed: {}", e);
             }
         });
     }
@@ -1185,6 +1187,7 @@ pub async fn stop_recording(
     app: AppHandle,
     state: State<'_, RecorderState>,
 ) -> Result<String, String> {
+    #[cfg(debug_assertions)]
     let stop_start = Instant::now();
 
     log_start("RECORDING_STOP");

@@ -389,16 +389,22 @@ impl HotkeySpec {
             .filter(|token| !is_modifier_token(token))
             .collect::<HashSet<_>>();
 
-        if pressed_regular.len() != self.regular_keys.len() {
-            return false;
-        }
+        if self.regular_keys.is_empty() {
+            // Modifier-only shortcuts should remain active while the modifier is held,
+            // even if the user presses other non-modifier keys. Without this, PTT
+            // modifier-only hotkeys flap between released/pressed on every keystroke.
+        } else {
+            if pressed_regular.len() != self.regular_keys.len() {
+                return false;
+            }
 
-        if !self
-            .regular_keys
-            .iter()
-            .all(|key| pressed_regular.contains(key.as_str()))
-        {
-            return false;
+            if !self
+                .regular_keys
+                .iter()
+                .all(|key| pressed_regular.contains(key.as_str()))
+            {
+                return false;
+            }
         }
 
         if !self
@@ -714,6 +720,15 @@ mod tests {
         let spec = HotkeySpec::parse("RightCommand").unwrap();
         assert!(spec.matches(&pressed(&["RightCommand"])));
         assert!(!spec.matches(&pressed(&["LeftCommand"])));
+    }
+
+    #[test]
+    fn modifier_only_hotkey_stays_matched_with_extra_regular_keys() {
+        let spec = HotkeySpec::parse("RightCommand").unwrap();
+        assert!(spec.matches(&pressed(&["RightCommand", "A"])));
+        assert!(spec.matches(&pressed(&["RightCommand", "A", "B"])));
+        assert!(!spec.matches(&pressed(&["LeftCommand", "A"])));
+        assert!(!spec.matches(&pressed(&["RightCommand", "LeftShift"])));
     }
 
     #[test]

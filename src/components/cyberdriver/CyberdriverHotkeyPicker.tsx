@@ -236,7 +236,7 @@ export function CyberdriverHotkeyPicker({
       >
         <DialogContent
           showCloseButton={false}
-          className="max-w-[560px] rounded-[24px] border-border/70 px-7 py-7 shadow-2xl"
+          className="max-w-[560px] px-6 py-6"
         >
           <button
             type="button"
@@ -260,7 +260,7 @@ export function CyberdriverHotkeyPicker({
             <button
               type="button"
               ref={captureBoxRef}
-              className="flex min-h-[96px] w-full items-center justify-center rounded-[20px] border border-border/80 bg-background px-5 py-5 outline-none transition-all focus:border-ring focus:ring-4 focus:ring-ring/15"
+              className="flex min-h-[96px] w-full items-center justify-center rounded-lg border border-border bg-muted px-5 py-5 outline-none transition-colors focus:border-ring focus:ring-2 focus:ring-ring/20"
             >
               {candidateDisplay ? (
                 <div className="inline-flex min-h-11 items-center rounded-xl border border-border/80 bg-background px-4 py-2 text-[1rem] font-medium text-foreground shadow-xs">

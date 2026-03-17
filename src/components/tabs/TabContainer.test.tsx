@@ -16,74 +16,48 @@ vi.mock('@/hooks/useEventCoordinator', () => ({
 }));
 
 // Mock all tab components with simple test versions
-vi.mock('./RecordingsTab', () => ({
-  RecordingsTab: () => <div data-testid="recordings-tab">Recordings</div>
+vi.mock('./CyberdriverHomeTab', () => ({
+  CyberdriverHomeTab: () => <div data-testid="home-tab">Home</div>
 }));
 
-vi.mock('./OverviewTab', () => ({
-  OverviewTab: () => <div data-testid="overview-tab">Overview</div>
+vi.mock('./RecordingsTab', () => ({
+  RecordingsTab: () => <div data-testid="recordings-tab">Recordings</div>
 }));
 
 vi.mock('./ModelsTab', () => ({
   ModelsTab: () => <div data-testid="models-tab">Models</div>
 }));
 
-vi.mock('./SettingsTab', () => ({
-  SettingsTab: () => <div data-testid="settings-tab">Settings</div>
-}));
-
-vi.mock('./EnhancementsTab', () => ({
-  EnhancementsTab: () => <div data-testid="enhancements-tab">Enhancements</div>
-}));
-
-vi.mock('./AdvancedTab', () => ({
-  AdvancedTab: () => <div data-testid="advanced-tab">Advanced</div>
-}));
-
-vi.mock('./AccountTab', () => ({
-  AccountTab: () => <div data-testid="account-tab">Account</div>
+vi.mock('./CyberdriverSettingsTab', () => ({
+  CyberdriverSettingsTab: () => <div data-testid="settings-tab">Settings</div>
 }));
 
 vi.mock('./AboutTab', () => ({
   AboutTab: () => <div data-testid="about-tab">About</div>
 }));
 
-vi.mock('./HelpTab', () => ({
-  HelpTab: () => <div data-testid="help-tab">Help</div>
-}));
-
 describe('TabContainer', () => {
   it('renders correct tab based on activeSection', () => {
-    const { rerender } = render(<TabContainer activeSection="overview" />);
-    expect(screen.getByTestId('overview-tab')).toBeInTheDocument();
+    const { rerender } = render(
+      <TabContainer activeSection="home" onSectionChange={vi.fn()} />
+    );
+    expect(screen.getByTestId('home-tab')).toBeInTheDocument();
     
-    rerender(<TabContainer activeSection="recordings" />);
+    rerender(<TabContainer activeSection="recordings" onSectionChange={vi.fn()} />);
     expect(screen.getByTestId('recordings-tab')).toBeInTheDocument();
     
-    rerender(<TabContainer activeSection="models" />);
+    rerender(<TabContainer activeSection="models" onSectionChange={vi.fn()} />);
     expect(screen.getByTestId('models-tab')).toBeInTheDocument();
     
-    rerender(<TabContainer activeSection="general" />);
+    rerender(<TabContainer activeSection="settings" onSectionChange={vi.fn()} />);
     expect(screen.getByTestId('settings-tab')).toBeInTheDocument();
     
-    rerender(<TabContainer activeSection="formatting" />);
-    expect(screen.getByTestId('enhancements-tab')).toBeInTheDocument();
-    
-    rerender(<TabContainer activeSection="advanced" />);
-    expect(screen.getByTestId('advanced-tab')).toBeInTheDocument();
-    
-    rerender(<TabContainer activeSection="license" />);
-    expect(screen.getByTestId('account-tab')).toBeInTheDocument();
-    
-    rerender(<TabContainer activeSection="about" />);
+    rerender(<TabContainer activeSection="about" onSectionChange={vi.fn()} />);
     expect(screen.getByTestId('about-tab')).toBeInTheDocument();
-    
-    rerender(<TabContainer activeSection="help" />);
-    expect(screen.getByTestId('help-tab')).toBeInTheDocument();
   });
 
-  it('renders overview tab for unknown sections', () => {
-    render(<TabContainer activeSection="unknown" />);
-    expect(screen.getByTestId('overview-tab')).toBeInTheDocument();
+  it('renders home tab for unknown sections', () => {
+    render(<TabContainer activeSection="unknown" onSectionChange={vi.fn()} />);
+    expect(screen.getByTestId('home-tab')).toBeInTheDocument();
   });
 });

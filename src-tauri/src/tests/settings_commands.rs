@@ -14,6 +14,8 @@ mod tests {
         assert_eq!(settings.transcription_cleanup_days, None);
         assert_eq!(settings.launch_at_startup, false);
         assert_eq!(settings.onboarding_completed, false);
+        assert_eq!(settings.onboarding_step, "welcome");
+        assert_eq!(settings.onboarding_version, 2);
         assert_eq!(settings.check_updates_automatically, true); // Default to true
     }
 
@@ -30,6 +32,8 @@ mod tests {
             pill_position: Some((100.0, 200.0)),
             launch_at_startup: false,
             onboarding_completed: true,
+            onboarding_step: "finish".to_string(),
+            onboarding_version: 2,
             translate_to_english: false,
             check_updates_automatically: true,
             selected_microphone: None,
@@ -94,6 +98,8 @@ mod tests {
             pill_position: None,
             launch_at_startup: true,
             onboarding_completed: false,
+            onboarding_step: "permissions".to_string(),
+            onboarding_version: 2,
             translate_to_english: true,
             check_updates_automatically: true,
             selected_microphone: Some("USB Microphone".to_string()),
@@ -198,6 +204,8 @@ mod tests {
             "transcription_cleanup_days": settings.transcription_cleanup_days,
             "launch_at_startup": settings.launch_at_startup,
             "onboarding_completed": settings.onboarding_completed,
+            "onboarding_step": settings.onboarding_step,
+            "onboarding_version": settings.onboarding_version,
         });
 
         assert_eq!(value["hotkey"], "CommandOrControl+Shift+Space");
@@ -207,6 +215,8 @@ mod tests {
         assert_eq!(value["transcription_cleanup_days"], serde_json::Value::Null);
         assert_eq!(value["launch_at_startup"], false);
         assert_eq!(value["onboarding_completed"], false);
+        assert_eq!(value["onboarding_step"], "welcome");
+        assert_eq!(value["onboarding_version"], 2);
     }
 
     #[test]

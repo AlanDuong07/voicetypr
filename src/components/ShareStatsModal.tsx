@@ -197,7 +197,7 @@ export function ShareStatsModal({ open, onOpenChange, stats }: ShareStatsModalPr
     if (!imageDataUrl) return;
 
     try {
-      const fileName = `voicetypr-stats-${Date.now()}.png`;
+      const fileName = `cyberdriver-stats-${Date.now()}.png`;
 
       // Use Tauri's save dialog to let user choose location
       const { save } = await import('@tauri-apps/plugin-dialog');
@@ -220,7 +220,7 @@ export function ShareStatsModal({ open, onOpenChange, stats }: ShareStatsModalPr
       console.error("Failed to download image:", err);
       // Fallback to browser download
       const link = document.createElement("a");
-      link.download = `voicetypr-stats-${Date.now()}.png`;
+      link.download = `cyberdriver-stats-${Date.now()}.png`;
       link.href = imageDataUrl;
       document.body.appendChild(link);
       link.click();

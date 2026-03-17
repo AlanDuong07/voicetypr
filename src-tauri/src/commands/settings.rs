@@ -15,6 +15,7 @@ use tauri_plugin_store::StoreExt;
 pub const MIN_INDICATOR_OFFSET: u32 = 10;
 pub const MAX_INDICATOR_OFFSET: u32 = 50;
 pub const DEFAULT_INDICATOR_OFFSET: u32 = 10;
+pub const CURRENT_ONBOARDING_VERSION: u32 = 2;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Settings {
@@ -29,6 +30,8 @@ pub struct Settings {
     pub pill_position: Option<(f64, f64)>,
     pub launch_at_startup: bool,
     pub onboarding_completed: bool,
+    pub onboarding_step: String,
+    pub onboarding_version: u32,
     pub check_updates_automatically: bool,
     pub selected_microphone: Option<String>,
     // Push-to-talk support
@@ -63,6 +66,8 @@ impl Default for Settings {
             pill_position: None,              // No saved position initially
             launch_at_startup: false,         // Default to not launching at startup
             onboarding_completed: false,      // Default to not completed
+            onboarding_step: "welcome".to_string(),
+            onboarding_version: CURRENT_ONBOARDING_VERSION,
             check_updates_automatically: true, // Default to automatic updates enabled
             selected_microphone: None,        // Default to system default microphone
             recording_mode: "toggle".to_string(), // Default to toggle mode for backward compatibility
@@ -199,6 +204,15 @@ pub async fn get_settings(app: AppHandle) -> Result<Settings, String> {
             .get("onboarding_completed")
             .and_then(|v| v.as_bool())
             .unwrap_or_else(|| Settings::default().onboarding_completed),
+        onboarding_step: store
+            .get("onboarding_step")
+            .and_then(|v| v.as_str().map(|s| s.to_string()))
+            .unwrap_or_else(|| Settings::default().onboarding_step),
+        onboarding_version: store
+            .get("onboarding_version")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u32)
+            .unwrap_or(CURRENT_ONBOARDING_VERSION),
         check_updates_automatically: store
             .get("check_updates_automatically")
             .and_then(|v| v.as_bool())
@@ -303,6 +317,8 @@ pub async fn save_settings(app: AppHandle, settings: Settings) -> Result<(), Str
     );
     store.set("launch_at_startup", json!(settings.launch_at_startup));
     store.set("onboarding_completed", json!(settings.onboarding_completed));
+    store.set("onboarding_step", json!(settings.onboarding_step));
+    store.set("onboarding_version", json!(settings.onboarding_version));
     store.set(
         "check_updates_automatically",
         json!(settings.check_updates_automatically),

@@ -6,31 +6,38 @@ import { AppContainer } from './AppContainer';
 const mockSettings = {
   onboarding_completed: true,
   transcription_cleanup_days: 30,
-  hotkey: 'Cmd+Shift+Space'
+  hotkey: 'Cmd+Shift+Space',
+  onboarding_step: 'finish',
+  onboarding_version: 2,
 };
 
 vi.mock('@/contexts/SettingsContext', () => ({
   useSettings: () => ({
     settings: mockSettings,
-    refreshSettings: vi.fn()
+    refreshSettings: vi.fn(),
+    isLoading: false,
+    updateSettings: vi.fn(),
   })
 }));
 
-vi.mock('@/contexts/LicenseContext', () => ({
-  useLicense: () => ({
-    licenseStatus: {
-      is_licensed: false,
-      license_key: null,
-      email: null
+vi.mock('@/contexts/CyberdriverContext', () => ({
+  useCyberdriver: () => ({
+    settings: {
+      secret: 'sk-test',
     },
-    checkLicense: vi.fn()
-  })
-}));
-
-vi.mock('@/contexts/ReadinessContext', () => ({
-  useReadiness: () => ({
-    checkAccessibilityPermission: vi.fn().mockResolvedValue(true),
-    checkMicrophonePermission: vi.fn().mockResolvedValue(true)
+    status: {
+      local_server_running: false,
+      tunnel_connected: false,
+      local_server_port: 3000,
+      machine_uuid: 'machine-123',
+    },
+    isLoading: false,
+    refreshStatus: vi.fn(),
+    refreshSettings: vi.fn(),
+    saveSettings: vi.fn(),
+    powerOn: vi.fn(),
+    powerOff: vi.fn(),
+    restartRuntime: vi.fn(),
   })
 }));
 
@@ -63,8 +70,8 @@ vi.mock('@/utils/keyring', () => ({
 }));
 
 // Mock components
-vi.mock('@/components/onboarding/OnboardingDesktop', () => ({
-  OnboardingDesktop: () => <div data-testid="onboarding">Onboarding</div>
+vi.mock('@/components/onboarding/CyberdriverOnboarding', () => ({
+  CyberdriverOnboarding: () => <div data-testid="onboarding">Onboarding</div>
 }));
 
 vi.mock('@/components/ui/sidebar', () => ({
@@ -78,11 +85,13 @@ vi.mock('@/components/ui/sidebar', () => ({
   SidebarInset: ({ children }: any) => <div>{children}</div>,
   SidebarContent: ({ children }: any) => <div>{children}</div>,
   SidebarGroup: ({ children }: any) => <div>{children}</div>,
+  SidebarGroupLabel: ({ children }: any) => <div>{children}</div>,
   SidebarGroupContent: ({ children }: any) => <div>{children}</div>,
   SidebarHeader: ({ children }: any) => <div>{children}</div>,
   SidebarMenu: ({ children }: any) => <div>{children}</div>,
   SidebarMenuItem: ({ children }: any) => <div>{children}</div>,
   SidebarMenuButton: ({ children }: any) => <button>{children}</button>,
+  SidebarSeparator: () => <div />,
   SidebarTrigger: ({ children }: any) => <button>{children}</button>,
   SidebarFooter: ({ children }: any) => <div>{children}</div>,
   useSidebar: () => ({ isOpen: true, toggle: vi.fn() })
@@ -99,7 +108,7 @@ vi.mock('./tabs/TabContainer', () => ({
 // Mock event coordinator
 vi.mock('@/hooks/useEventCoordinator', () => ({
   useEventCoordinator: () => ({
-    registerEvent: vi.fn()
+    registerEvent: vi.fn().mockResolvedValue(() => {})
   })
 }));
 
@@ -115,10 +124,10 @@ describe('AppContainer', () => {
     expect(screen.getByTestId('tab-container')).toBeInTheDocument();
   });
 
-  it('shows onboarding when not completed', () => {
+  it('shows onboarding when not completed', async () => {
     mockSettings.onboarding_completed = false;
     render(<AppContainer />);
-    expect(screen.getByTestId('onboarding')).toBeInTheDocument();
+    expect(await screen.findByTestId('onboarding')).toBeInTheDocument();
     expect(screen.queryByTestId('sidebar')).not.toBeInTheDocument();
   });
 

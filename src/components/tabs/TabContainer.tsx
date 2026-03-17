@@ -9,9 +9,10 @@ import { useEventCoordinator } from "@/hooks/useEventCoordinator";
 
 interface TabContainerProps {
   activeSection: string;
+  onSectionChange?: (section: string) => void;
 }
 
-export function TabContainer({ activeSection }: TabContainerProps) {
+export function TabContainer({ activeSection, onSectionChange }: TabContainerProps) {
   const { registerEvent } = useEventCoordinator("main");
 
   useEffect(() => {
@@ -22,7 +23,7 @@ export function TabContainer({ activeSection }: TabContainerProps) {
   const renderTabContent = () => {
     switch (activeSection) {
       case "home":
-        return <CyberdriverHomeTab />;
+        return <CyberdriverHomeTab onSectionChange={onSectionChange} />;
 
       case "recordings":
         return <RecordingsTab />;
@@ -41,5 +42,9 @@ export function TabContainer({ activeSection }: TabContainerProps) {
     }
   };
 
-  return <div className="h-full flex flex-col">{renderTabContent()}</div>;
+  return (
+    <div key={activeSection} className="flex h-full flex-col animate-fade-in">
+      {renderTabContent()}
+    </div>
+  );
 }

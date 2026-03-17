@@ -1,26 +1,80 @@
-import { Badge } from "@/components/ui/badge";
+import { AppPage, AppPanel, AppSectionHeading } from "@/components/layout/AppPage";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { useCyberdriver } from "@/contexts/CyberdriverContext";
 import { useSettings } from "@/contexts/SettingsContext";
+import { useCyberdriverPermissions } from "@/hooks/useCyberdriverPermissions";
 import { formatKeyForDisplay, normalizeShortcutKeys } from "@/lib/keyboard-normalizer";
 import { isMacOS } from "@/lib/platform";
+import { cn } from "@/lib/utils";
 import {
   Cable,
   CheckCircle2,
+  ChevronRight,
   Loader2,
   Power,
   Sparkles,
+  TriangleAlert,
   Type,
 } from "lucide-react";
 import type { ReactNode } from "react";
+import { useMemo } from "react";
 import { toast } from "sonner";
 
-export function CyberdriverHomeTab() {
+interface CyberdriverHomeTabProps {
+  onSectionChange?: (section: string) => void;
+}
+
+export function CyberdriverHomeTab({ onSectionChange }: CyberdriverHomeTabProps) {
   const { status, settings, isLoading, powerOn, powerOff } = useCyberdriver();
   const { settings: appSettings } = useSettings();
+  const {
+    requiredPermissionsGranted,
+    snapshot,
+    isLoading: permissionsLoading,
+  } = useCyberdriverPermissions();
 
   const isRunning = Boolean(status?.local_server_running || status?.tunnel_connected);
+  const hasApiKey = Boolean(settings?.secret?.trim());
+  const hasDictationModel = Boolean(appSettings?.current_model?.trim());
+  const selectedModelLabel = appSettings?.current_model || "Not selected";
+  const dictationShortcut = appSettings?.hotkey || "CommandOrControl+Shift+Space";
+  const computerUseShortcut = appSettings?.computer_use_hotkey || "Option+Space";
+
+  const nextAction = useMemo(() => {
+    if (!requiredPermissionsGranted) {
+      return {
+        title: "Finish macOS permissions",
+        description: "Microphone, Accessibility, and Screen Recording are required before Cyberdriver can start.",
+        label: "Open Settings",
+        section: "settings",
+      };
+    }
+    if (!hasApiKey) {
+      return {
+        title: "Add your Cyberdesk API key",
+        description: "Computer use mode requires a cloud connection.",
+        label: "Open Settings",
+        section: "settings",
+      };
+    }
+    if (!hasDictationModel) {
+      return {
+        title: "Choose a speech model",
+        description: "Dictation needs a local model to transcribe your voice.",
+        label: "Open Models",
+        section: "models",
+      };
+    }
+    if (!isRunning) {
+      return {
+        title: "Turn Cyberdriver on",
+        description: "Everything looks ready. Power on to start.",
+        label: "Use Power Button",
+        section: "home",
+      };
+    }
+    return null;
+  }, [hasApiKey, hasDictationModel, isRunning, requiredPermissionsGranted]);
 
   const handleToggle = async () => {
     try {
@@ -30,178 +84,253 @@ export function CyberdriverHomeTab() {
         await powerOn();
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to change Cyberdriver power state.";
+      const message = error instanceof Error ? error.message : "Failed to change power state.";
       console.error(message, error);
       toast.error(message);
     }
   };
 
   return (
-    <div className="h-full overflow-auto p-6">
-      <div className="mx-auto max-w-4xl space-y-5">
-        <div className="space-y-6">
-          <div className="space-y-3">
-            <Badge
-              className={`rounded-full px-3 py-1 text-[12px] font-medium ${
-                isRunning
-                  ? "bg-emerald-100 text-emerald-700"
-                  : "bg-muted text-muted-foreground"
-              }`}
-            >
-              {isRunning ? "Online" : "Offline"}
-            </Badge>
-            <div className="space-y-2">
-              <h1 className="text-3xl font-semibold tracking-tight text-foreground">
-                Cyberdriver
-              </h1>
-            </div>
-          </div>
-
-          <div className="flex flex-col items-center justify-center rounded-2xl border border-border/70 bg-muted/15 p-6 text-center">
-            <Button
-              type="button"
-              size="icon"
-              onClick={handleToggle}
-              disabled={isLoading}
-              className={`h-20 w-20 rounded-full ${
-                isRunning
-                  ? "bg-emerald-600 hover:bg-emerald-700"
-                  : "bg-primary hover:bg-primary/90"
-              }`}
-            >
-              {isLoading ? (
-                <Loader2 className="h-7 w-7 animate-spin" />
-              ) : (
-                <Power className="h-7 w-7" />
-              )}
-            </Button>
-
-            <div className="mt-5 space-y-1">
-              <p className="text-2xl font-semibold tracking-tight text-foreground">
-                {isRunning ? "Cyberdriver is on" : "Cyberdriver is off"}
-              </p>
-              <p className="text-sm text-muted-foreground">
-                {status?.tunnel_connected
-                  ? "Connected to Cyberdesk cloud"
-                  : "Start the local API and reverse tunnel"}
-              </p>
-            </div>
-
-            {status?.last_error && !status?.tunnel_connected ? (
-              <p className="mt-3 max-w-[22rem] text-xs leading-5 text-muted-foreground">
-                {status.last_error}
-              </p>
-            ) : null}
-          </div>
-
-          <div className="space-y-4">
-            <p className="max-w-xl text-sm leading-6 text-muted-foreground">
-              Two voice modes for desktop control and fast dictation.
+    <AppPage
+      title="Home"
+      description="Control center for Cyberdriver runtime, voice modes, and system readiness."
+    >
+      <div className="space-y-6">
+        {/* Power control — the ONE dominant element */}
+        <AppPanel className="flex flex-col items-center gap-6 py-10 text-center">
+          <Button
+            type="button"
+            size="icon"
+            onClick={handleToggle}
+            disabled={isLoading}
+            className={cn(
+              "h-20 w-20 rounded-full shadow-md",
+              isRunning
+                ? "bg-emerald-600 text-white hover:bg-emerald-700"
+                : "bg-foreground text-background hover:bg-foreground/90",
+            )}
+          >
+            {isLoading ? (
+              <Loader2 className="h-7 w-7 animate-spin" />
+            ) : (
+              <Power className="h-7 w-7" />
+            )}
+          </Button>
+          <div>
+            <p className="text-lg font-semibold text-foreground">
+              {isRunning ? "Cyberdriver is running" : "Cyberdriver is off"}
             </p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {isRunning
+                ? "Local API, tunnel, and hotkeys are active."
+                : "Press the button to start the runtime."}
+            </p>
+          </div>
+          {status?.last_error && (
+            <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-left text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+              <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>{status.last_error}</span>
+            </div>
+          )}
+        </AppPanel>
 
-            <div className="grid gap-3 sm:grid-cols-2">
-              <ModeCard
+        {/* Next action prompt */}
+        {nextAction && nextAction.section !== "home" && (
+          <AppPanel>
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-sm font-medium text-foreground">{nextAction.title}</p>
+                <p className="mt-0.5 text-sm text-muted-foreground">{nextAction.description}</p>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => onSectionChange?.(nextAction.section)}
+              >
+                {nextAction.label}
+                <ChevronRight className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          </AppPanel>
+        )}
+
+        {/* Readiness checks */}
+        <AppPanel>
+          <AppSectionHeading title="Readiness" />
+          <div className="mt-4 divide-y divide-border">
+            <ReadinessRow
+              label="Permissions"
+              status={
+                permissionsLoading
+                  ? "Checking..."
+                  : requiredPermissionsGranted
+                    ? "Ready"
+                    : `Missing: ${formatPermissionSummary(snapshot)}`
+              }
+              ok={!permissionsLoading && requiredPermissionsGranted}
+              action={
+                !requiredPermissionsGranted && !permissionsLoading
+                  ? () => onSectionChange?.("settings")
+                  : undefined
+              }
+            />
+            <ReadinessRow
+              label="Computer use"
+              status={hasApiKey ? "API key configured" : "No API key"}
+              ok={hasApiKey}
+              action={!hasApiKey ? () => onSectionChange?.("settings") : undefined}
+            />
+            <ReadinessRow
+              label="Dictation"
+              status={hasDictationModel ? selectedModelLabel : "No model selected"}
+              ok={hasDictationModel}
+              action={!hasDictationModel ? () => onSectionChange?.("models") : undefined}
+            />
+          </div>
+        </AppPanel>
+
+        {/* Voice modes and system info side by side */}
+        <div className="grid gap-6 lg:grid-cols-2">
+          <AppPanel>
+            <AppSectionHeading title="Voice modes" />
+            <div className="mt-4 space-y-3">
+              <ModeRow
                 icon={<Sparkles className="h-4 w-4" />}
                 title="Computer Use"
-                shortcut={appSettings?.computer_use_hotkey || "Option+Space"}
-                detail={`API key: ${settings?.secret ? "Configured" : "Missing"}`}
+                shortcut={computerUseShortcut}
+                detail={hasApiKey ? "Ready" : "Needs API key"}
+                ok={hasApiKey}
               />
-              <ModeCard
+              <ModeRow
                 icon={<Type className="h-4 w-4" />}
                 title="Dictation"
-                shortcut={appSettings?.hotkey || "CommandOrControl+Shift+Space"}
-                detail={`Model: ${appSettings?.current_model || "Not selected"}`}
+                shortcut={dictationShortcut}
+                detail={hasDictationModel ? selectedModelLabel : "Needs model"}
+                ok={hasDictationModel}
               />
             </div>
-          </div>
-        </div>
+          </AppPanel>
 
-        <div className="grid gap-3 md:grid-cols-3">
-          <StatCard
-            label="Machine ID"
-            value={status?.machine_uuid || "Loading..."}
-            mono
-          />
-          <StatCard
-            label="Local API"
-            value={
-              status?.local_server_port
-                ? `127.0.0.1:${status.local_server_port}`
-                : "Not running"
-            }
-          />
-          <StatCard
-            label="Tunnel"
-            value={status?.tunnel_connected ? "Connected" : "Disconnected"}
-            statusIcon={
-              status?.tunnel_connected ? (
-                <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-              ) : (
-                <Cable className="h-4 w-4 text-muted-foreground" />
-              )
-            }
-          />
+          <AppPanel>
+            <AppSectionHeading title="System" />
+            <div className="mt-4 space-y-2">
+              <KVRow label="Machine ID" value={status?.machine_uuid || "Loading..."} mono />
+              <KVRow
+                label="Local API"
+                value={
+                  status?.local_server_port
+                    ? `127.0.0.1:${status.local_server_port}`
+                    : "Not running"
+                }
+              />
+              <KVRow
+                label="Tunnel"
+                value={status?.tunnel_connected ? "Connected" : "Disconnected"}
+                icon={
+                  status?.tunnel_connected ? (
+                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+                  ) : (
+                    <Cable className="h-3.5 w-3.5 text-muted-foreground" />
+                  )
+                }
+              />
+            </div>
+          </AppPanel>
         </div>
       </div>
+    </AppPage>
+  );
+}
+
+function ReadinessRow({
+  label,
+  status,
+  ok,
+  action,
+}: {
+  label: string;
+  status: string;
+  ok: boolean;
+  action?: () => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-4 py-3">
+      <div className="flex items-center gap-3">
+        <span
+          className={cn(
+            "inline-flex h-2 w-2 rounded-full",
+            ok ? "bg-emerald-500" : "bg-amber-500",
+          )}
+        />
+        <div>
+          <p className="text-sm font-medium text-foreground">{label}</p>
+          <p className="text-xs text-muted-foreground">{status}</p>
+        </div>
+      </div>
+      {action && (
+        <Button variant="ghost" size="sm" onClick={action}>
+          Fix
+          <ChevronRight className="h-3.5 w-3.5" />
+        </Button>
+      )}
     </div>
   );
 }
 
-function ModeCard({
+function ModeRow({
   icon,
   title,
   shortcut,
   detail,
+  ok,
 }: {
   icon: ReactNode;
   title: string;
   shortcut: string;
   detail: string;
+  ok: boolean;
 }) {
   return (
-    <div className="rounded-2xl border border-border/70 bg-background/80 p-4">
-      <div className="flex items-center gap-2 text-sm font-medium text-foreground">
-        {icon}
-        {title}
+    <div className="flex items-center justify-between gap-4 rounded-lg border border-border px-4 py-3">
+      <div className="flex items-center gap-3">
+        <div className="flex h-8 w-8 items-center justify-center rounded-md bg-muted text-foreground">
+          {icon}
+        </div>
+        <div>
+          <p className="text-sm font-medium text-foreground">{title}</p>
+          <p className={cn("text-xs", ok ? "text-muted-foreground" : "text-amber-600 dark:text-amber-400")}>
+            {detail}
+          </p>
+        </div>
       </div>
-      <p className="mt-3 text-sm text-muted-foreground">
-        Shortcut:{" "}
-        <span className="font-medium text-foreground">
-          {formatShortcutLabel(shortcut)}
-        </span>
-      </p>
-      <p className="mt-1 text-sm text-muted-foreground">{detail}</p>
+      <kbd className="rounded-md border border-border bg-muted px-2 py-1 font-mono text-xs text-muted-foreground">
+        {formatShortcutLabel(shortcut)}
+      </kbd>
     </div>
   );
 }
 
-function StatCard({
+function KVRow({
   label,
   value,
   mono = false,
-  statusIcon,
+  icon,
 }: {
   label: string;
   value: string;
   mono?: boolean;
-  statusIcon?: ReactNode;
+  icon?: ReactNode;
 }) {
   return (
-    <Card className="rounded-2xl border-border/70 p-4 shadow-none">
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
-          {label}
+    <div className="flex items-center justify-between gap-4 py-1.5">
+      <p className="text-sm text-muted-foreground">{label}</p>
+      <div className="flex items-center gap-2">
+        {icon}
+        <p className={cn("text-sm text-foreground", mono && "break-all font-mono text-xs")}>
+          {value}
         </p>
-        {statusIcon}
       </div>
-      <p
-        className={`mt-3 text-sm text-foreground ${
-          mono ? "break-all font-mono text-[13px]" : "font-medium"
-        }`}
-      >
-        {value}
-      </p>
-    </Card>
+    </div>
   );
 }
 
@@ -210,5 +339,16 @@ function formatShortcutLabel(shortcut: string) {
     .split("+")
     .filter(Boolean)
     .map((token) => formatKeyForDisplay(token, isMacOS))
-    .join("+");
+    .join(" ");
+}
+
+function formatPermissionSummary(
+  snapshot: ReturnType<typeof useCyberdriverPermissions>["snapshot"],
+) {
+  if (!snapshot) return "required permissions";
+  const missing: string[] = [];
+  if (snapshot.microphone !== "granted") missing.push("Microphone");
+  if (snapshot.accessibility !== "granted") missing.push("Accessibility");
+  if (snapshot.screenCapture !== "granted") missing.push("Screen Recording");
+  return missing.length > 0 ? missing.join(", ") : "required permissions";
 }

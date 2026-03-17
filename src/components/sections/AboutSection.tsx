@@ -1,16 +1,15 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { AppPage, AppPanel, AppSectionHeading } from "@/components/layout/AppPage";
 import { open } from '@tauri-apps/plugin-shell';
 import { getVersion } from '@tauri-apps/api/app';
-import { 
+import {
   BookOpen,
   ExternalLink,
   Globe,
-  Info,
-  RefreshCw
+  RefreshCw,
 } from "lucide-react";
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { updateService } from '@/services/updateService';
 
@@ -28,7 +27,6 @@ export function AboutSection() {
         setAppVersion('Unknown');
       }
     };
-
     fetchVersion();
   }, []);
 
@@ -42,96 +40,87 @@ export function AboutSection() {
     try {
       await open(url);
     } catch (error) {
-      console.error('Failed to open external link:', error);
+      console.error('Failed to open link:', error);
       toast.error('Failed to open link');
     }
   };
 
   return (
-    <div className="h-full flex flex-col">
-      {/* Header */}
-      <div className="px-6 py-4 border-b border-border/40">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-semibold">About</h1>
-            <p className="text-sm text-muted-foreground mt-1">
-              App information and resources
-            </p>
+    <AppPage
+      title="Support"
+      description="Version info, updates, and documentation."
+    >
+      <div className="space-y-6">
+        <AppPanel>
+          <AppSectionHeading
+            title="Application"
+            action={
+              <Button
+                onClick={handleCheckUpdate}
+                disabled={isCheckingUpdate}
+                variant="outline"
+                size="sm"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${isCheckingUpdate ? 'animate-spin' : ''}`} />
+                {isCheckingUpdate ? 'Checking...' : 'Check for Updates'}
+              </Button>
+            }
+          />
+          <div className="mt-4">
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">Version</span>
+              <Badge variant="outline" className="font-mono text-xs">
+                v{appVersion || 'Loading...'}
+              </Badge>
+            </div>
           </div>
+        </AppPanel>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <LinkCard
+            icon={<Globe className="h-4 w-4" />}
+            title="Website"
+            subtitle="cyberdesk.io"
+            onClick={() => openExternalLink("https://www.cyberdesk.io")}
+          />
+          <LinkCard
+            icon={<BookOpen className="h-4 w-4" />}
+            title="Docs"
+            subtitle="Quickstart and setup"
+            onClick={() => openExternalLink("https://docs.cyberdesk.io/cyberdriver/quickstart")}
+          />
         </div>
       </div>
+    </AppPage>
+  );
+}
 
-      <ScrollArea className="flex-1">
-        <div className="p-6 space-y-6">
-          {/* App Information Section */}
-          <div className="space-y-4">
-            <h2 className="text-base font-semibold">App Information</h2>
-            
-            <div className="rounded-lg border border-border/50 bg-card p-4 space-y-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Info className="h-4 w-4 text-muted-foreground" />
-                  <span className="text-sm text-muted-foreground">Version</span>
-                </div>
-                <Badge variant="secondary" className="font-mono">
-                  v{appVersion || 'Loading...'}
-                </Badge>
-              </div>
-
-              <div className="flex justify-center">
-                <Button
-                  onClick={handleCheckUpdate}
-                  disabled={isCheckingUpdate}
-                  variant="ghost"
-                  size="sm"
-                >
-                  <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${isCheckingUpdate ? 'animate-spin' : ''}`} />
-                  {isCheckingUpdate ? 'Checking...' : 'Check for Updates'}
-                </Button>
-              </div>
-            </div>
-          </div>
-
-          {/* Resources Section */}
-          <div className="space-y-4">
-            <h2 className="text-base font-semibold">Resources</h2>
-            
-            <div className="flex gap-3">
-              <button
-                onClick={() => openExternalLink("https://www.cyberdesk.io")}
-                className="flex-1 rounded-lg border border-border/50 bg-card p-4 flex items-center justify-between hover:bg-accent/50 transition-colors group"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="p-1.5 rounded-md bg-primary/10">
-                    <Globe className="h-4 w-4 text-primary" />
-                  </div>
-                  <div className="text-left">
-                    <p className="text-sm font-medium">Website</p>
-                    <p className="text-xs text-muted-foreground">Official site</p>
-                  </div>
-                </div>
-                <ExternalLink className="h-4 w-4 text-muted-foreground group-hover:text-foreground transition-colors" />
-              </button>
-
-              <button
-                onClick={() => openExternalLink("https://docs.cyberdesk.io/cyberdriver/quickstart")}
-                className="flex-1 rounded-lg border border-border/50 bg-card p-4 flex items-center justify-between hover:bg-accent/50 transition-colors group"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="p-1.5 rounded-md bg-accent">
-                    <BookOpen className="h-4 w-4 text-foreground" />
-                  </div>
-                  <div className="text-left">
-                    <p className="text-sm font-medium">Docs</p>
-                    <p className="text-xs text-muted-foreground">Cyberdriver setup guide</p>
-                  </div>
-                </div>
-                <ExternalLink className="h-4 w-4 text-muted-foreground group-hover:text-foreground transition-colors" />
-              </button>
-            </div>
-          </div>
+function LinkCard({
+  icon,
+  title,
+  subtitle,
+  onClick,
+}: {
+  icon: ReactNode;
+  title: string;
+  subtitle: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="group flex items-center justify-between gap-3 rounded-xl border border-border bg-card p-4 text-left transition-colors hover:bg-accent"
+    >
+      <div className="flex items-center gap-3">
+        <div className="flex h-8 w-8 items-center justify-center rounded-md bg-muted text-foreground">
+          {icon}
         </div>
-      </ScrollArea>
-    </div>
+        <div>
+          <p className="text-sm font-medium text-foreground">{title}</p>
+          <p className="text-xs text-muted-foreground">{subtitle}</p>
+        </div>
+      </div>
+      <ExternalLink className="h-4 w-4 text-muted-foreground transition-colors group-hover:text-foreground" />
+    </button>
   );
 }

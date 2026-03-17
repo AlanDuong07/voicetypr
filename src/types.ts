@@ -40,6 +40,13 @@ export const isLocalModel = (model: ModelInfo): model is LocalModelInfo =>
 export type RecordingMode = 'toggle' | 'push_to_talk';
 export type PillIndicatorMode = 'never' | 'always' | 'when_recording';
 export type PillIndicatorPosition = 'top-left' | 'top-center' | 'top-right' | 'bottom-left' | 'bottom-center' | 'bottom-right';
+export type OnboardingStepId =
+  | 'welcome'
+  | 'permissions'
+  | 'hotkeys'
+  | 'cyberdesk'
+  | 'dictation'
+  | 'finish';
 
 export interface AppSettings {
   hotkey: string;
@@ -51,6 +58,8 @@ export interface AppSettings {
   transcription_cleanup_days?: number | null;
   launch_at_startup?: boolean;
   onboarding_completed?: boolean;
+  onboarding_step?: OnboardingStepId;
+  onboarding_version?: number;
   check_updates_automatically?: boolean;
   selected_microphone?: string | null;
   // Push-to-talk support

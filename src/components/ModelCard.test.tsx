@@ -172,9 +172,8 @@ describe('ModelCard', () => {
       />
     );
 
-    // The card itself becomes clickable when downloaded
-    const card = document.querySelector('[data-slot="card"]');
-    expect(card).toHaveClass('cursor-pointer');
+    const card = screen.getByText(mockModel.display_name).closest('div[class*="cursor-pointer"]');
+    expect(card).toBeTruthy();
   });
 
   it('should show selected state correctly', () => {

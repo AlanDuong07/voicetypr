@@ -1,8 +1,8 @@
 import { CheckCircle, Download, HardDrive, Loader2, Star, X, Zap, Trash2 } from 'lucide-react';
 import { ModelInfo, isLocalModel } from '../types';
 import { Button } from './ui/button';
-import { Card } from './ui/card';
 import { Progress } from './ui/progress';
+import { cn } from '@/lib/utils';
 
 interface ModelCardProps {
   name: string;
@@ -27,9 +27,8 @@ export const ModelCard = function ModelCard({
   onSelect,
   onDelete,
   onCancelDownload,
-  showSelectButton = true
+  showSelectButton = true,
 }: ModelCardProps) {
-
   if (!isLocalModel(model)) {
     console.warn(`[ModelCard] Skipping non-local model card for ${model.name}`);
     return null;
@@ -42,111 +41,105 @@ export const ModelCard = function ModelCard({
       : `${Math.round(sizeInMB)} MB`;
   };
 
-  // Model is usable if downloaded
   const isUsable = model.downloaded;
 
   return (
-    <Card
-      className={`px-4 py-3 transition-all hover:shadow-sm ${
-        isUsable ? 'cursor-pointer hover:border-border' : ''
-      } ${
-        isSelected ? 'bg-primary/5 border-border/50' : 'border-border/50'
-      }`}
+    <div
+      className={cn(
+        "flex items-center justify-between gap-4 px-6 py-3.5 transition-colors",
+        isUsable && "cursor-pointer hover:bg-accent",
+        isSelected && "bg-primary/5",
+      )}
       onClick={() => isUsable && showSelectButton && onSelect(name)}
     >
-      <div className="flex items-center justify-between gap-3">
-        {/* Model Name */}
-        <div className="flex items-center gap-2 flex-shrink-0 min-w-0">
-          <h3 className="font-medium text-sm">{model.display_name || name}</h3>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-medium text-foreground">
+            {model.display_name || name}
+          </span>
           {model.recommended && (
-            <Star className="w-3.5 h-3.5 fill-yellow-500 text-yellow-500" aria-label="Recommended model" />
+            <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+              <Star className="h-3 w-3 fill-amber-500 text-amber-500" />
+              Recommended
+            </span>
+          )}
+          {isSelected && (
+            <span className="rounded-md bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary">
+              Active
+            </span>
           )}
         </div>
-
-        {/* Centered Stats */}
-        <div className="flex items-center justify-center gap-6 flex-1">
-          <div className="flex items-center gap-1.5">
-            <Zap className="w-3.5 h-3.5 text-green-500/70" />
-            <span className="text-sm font-medium">{model.speed_score}</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <CheckCircle className="w-3.5 h-3.5 text-blue-500/70" />
-            <span className="text-sm font-medium">{model.accuracy_score}</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <HardDrive className="w-3.5 h-3.5 text-purple-500/70" />
-            <span className="text-sm font-medium">{formatSize()}</span>
-          </div>
-        </div>
-
-        {/* Action Buttons */}
-        <div className="flex items-center gap-2 flex-shrink-0">
-          {model.downloaded ? (
-            // Model is downloaded - show delete option
-            <>
-              {onDelete && (
-                <Button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDelete(name);
-                  }}
-                  variant="ghost"
-                  size="sm"
-                  className="text-muted-foreground hover:text-destructive"
-                >
-                  <Trash2 className="w-3.5 h-3.5 mr-1" />
-                  Remove
-                </Button>
-              )}
-            </>
-          ) : isVerifying ? (
-            <div className="flex items-center gap-2 px-2 py-1 rounded bg-yellow-500/10">
-              <Loader2 className="w-3.5 h-3.5 animate-spin text-yellow-600" />
-              <span className="text-xs font-medium text-yellow-600">Verifying</span>
-            </div>
-          ) : downloadProgress !== undefined ? (
-            <>
-              {/* For Parakeet models, show indeterminate progress (FluidAudio doesn't report progress) */}
-              {model.engine === 'parakeet' && downloadProgress === 0 ? (
-                <div className="flex items-center gap-2 px-2 py-1 rounded bg-blue-500/10">
-                  <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-600" />
-                  <span className="text-xs font-medium text-blue-600">Downloading...</span>
-                </div>
-              ) : (
-                <>
-                  <Progress value={downloadProgress} className="w-20 h-1.5" />
-                  <span className="text-xs font-medium text-blue-600 w-10 text-right">{Math.round(downloadProgress)}%</span>
-                </>
-              )}
-              {onCancelDownload && (
-                <Button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onCancelDownload(name);
-                  }}
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8"
-                >
-                  <X className="w-4 h-4" />
-                </Button>
-              )}
-            </>
-          ) : (
-            <Button
-              onClick={(e) => {
-                e.stopPropagation();
-                onDownload(name);
-              }}
-              variant="outline"
-              size="sm"
-            >
-              <Download className="w-4 h-4 mr-1" />
-              Download
-            </Button>
-          )}
+        <div className="mt-1 flex items-center gap-3 text-xs text-muted-foreground">
+          <span className="inline-flex items-center gap-1">
+            <Zap className="h-3 w-3" />
+            {model.speed_score}
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <CheckCircle className="h-3 w-3" />
+            {model.accuracy_score}
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <HardDrive className="h-3 w-3" />
+            {formatSize()}
+          </span>
         </div>
       </div>
-    </Card>
+
+      <div className="flex shrink-0 items-center gap-2">
+        {model.downloaded ? (
+          onDelete && (
+            <Button
+              onClick={(e) => { e.stopPropagation(); onDelete(name); }}
+              variant="ghost"
+              size="sm"
+              className="text-muted-foreground hover:text-destructive"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Remove
+            </Button>
+          )
+        ) : isVerifying ? (
+          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-600 dark:text-amber-400">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            Verifying
+          </span>
+        ) : downloadProgress !== undefined ? (
+          <div className="flex items-center gap-2">
+            {model.engine === 'parakeet' && downloadProgress === 0 ? (
+              <span className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 dark:text-blue-400">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Downloading
+              </span>
+            ) : (
+              <div className="flex min-w-[100px] items-center gap-2">
+                <Progress value={downloadProgress} className="h-1.5 flex-1" />
+                <span className="w-8 text-right text-xs font-medium tabular-nums text-foreground">
+                  {Math.round(downloadProgress)}%
+                </span>
+              </div>
+            )}
+            {onCancelDownload && (
+              <Button
+                onClick={(e) => { e.stopPropagation(); onCancelDownload(name); }}
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+              >
+                <X className="h-3.5 w-3.5" />
+              </Button>
+            )}
+          </div>
+        ) : (
+          <Button
+            onClick={(e) => { e.stopPropagation(); onDownload(name); }}
+            variant="outline"
+            size="sm"
+          >
+            <Download className="h-3.5 w-3.5" />
+            Download
+          </Button>
+        )}
+      </div>
+    </div>
   );
 };

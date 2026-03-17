@@ -263,10 +263,17 @@ fn handle_ptt_mode(
                 return;
             }
 
-            if matches!(
-                current_state,
-                RecordingState::Recording | RecordingState::Starting
-            ) {
+            if current_state == RecordingState::Starting {
+                log::info!(
+                    "PTT: release received while recording is still starting; scheduling stop after start completes"
+                );
+                app_state
+                    .pending_stop_after_start
+                    .store(true, Ordering::SeqCst);
+                return;
+            }
+
+            if current_state == RecordingState::Recording {
                 log::info!("PTT: Stopping recording");
                 let app_handle = app.clone();
                 tauri::async_runtime::spawn(async move {
