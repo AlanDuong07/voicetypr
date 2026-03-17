@@ -1095,8 +1095,8 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 }
 
                 // Create toast window for feedback messages (positioned above pill) - all platforms
-                let toast_width = 400.0;
-                let toast_height = 80.0;
+                let toast_width = 460.0;
+                let toast_height = 112.0;
                 let pill_width = PILL_WINDOW_WIDTH;
                 let gap = 8.0; // Gap between pill and toast
 

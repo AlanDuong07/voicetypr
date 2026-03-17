@@ -53,7 +53,7 @@ export function FeedbackToast() {
   const content = formatToastContent(message);
 
   return (
-    <div className="fixed inset-0 flex items-end justify-center px-4 pb-4">
+    <div className="fixed inset-0 flex items-end justify-center px-3 pb-3">
       <div className="relative flex w-full max-w-[420px] items-start gap-3 overflow-hidden rounded-2xl border border-white/16 bg-[rgba(15,23,42,0.78)] px-4 py-3 text-white shadow-[0_18px_50px_rgba(2,6,23,0.40),0_6px_18px_rgba(2,6,23,0.24)] backdrop-blur-xl before:pointer-events-none before:absolute before:inset-0 before:rounded-2xl before:content-[''] before:shadow-[inset_2px_2px_0_-1px_rgba(255,255,255,0.5),inset_0_1px_0_rgba(255,255,255,0.14)]">
         <div className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${content.iconBgClass}`}>
           {content.icon}

@@ -680,8 +680,8 @@ impl WindowManager {
 
         // Reposition toast window (above pill)
         if let Some(toast) = self.app_handle.get_webview_window("toast") {
-            let toast_width = 400.0;
-            let toast_height = 80.0;
+            let toast_width = 460.0;
+            let toast_height = 112.0;
             let pill_width = PILL_WINDOW_WIDTH;
             let gap = 8.0;
             let toast_x = pill_x + (pill_width - toast_width) / 2.0;
@@ -718,8 +718,8 @@ impl WindowManager {
 
         // Reposition toast window (above or below pill depending on position)
         if let Some(toast) = self.app_handle.get_webview_window("toast") {
-            let toast_width = 400.0;
-            let toast_height = 80.0;
+            let toast_width = 460.0;
+            let toast_height = 112.0;
             let pill_width = PILL_WINDOW_WIDTH;
             let gap = 8.0;
             let toast_x = pill_x + (pill_width - toast_width) / 2.0;

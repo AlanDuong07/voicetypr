@@ -5,7 +5,7 @@ import "./globals.css";
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    <div className="w-screen h-screen overflow-hidden bg-transparent">
+    <div className="h-screen w-screen overflow-visible bg-transparent">
       <FeedbackToast />
     </div>
   </React.StrictMode>,
