@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use crate::audio::recorder::AudioRecorder;
+use crate::audio::recorder::{AudioRecorder, RecorderInactivityEvent};
 use crate::commands::settings::{get_settings, resolve_pill_indicator_mode, Settings};
 use crate::media::MediaPauseController;
 use crate::parakeet::messages::ParakeetResponse;
@@ -111,6 +111,38 @@ fn should_hide_pill_when_idle(mode: &str) -> bool {
     mode != "always"
 }
 
+fn friendly_transcription_error_message(error: &str) -> String {
+    let lower = error.to_lowercase();
+
+    if lower.contains("invalid audio data provided")
+        || lower.contains("at least 1 second of 16khz audio")
+        || lower.contains("too short")
+    {
+        return "Recording too short. Speak for a bit longer and try again.".to_string();
+    }
+
+    if lower.contains("no speech detected") || lower.contains("[blank_audio]") {
+        return "No speech detected. Try speaking closer to the microphone.".to_string();
+    }
+
+    if lower.contains("microphone")
+        && (lower.contains("permission") || lower.contains("access"))
+    {
+        return "Microphone access failed. Check your permission or selected input."
+            .to_string();
+    }
+
+    if lower.contains("sidecar returned error") || lower.contains("transcription_failed") {
+        return "Transcription failed. Please try again.".to_string();
+    }
+
+    if lower.contains("service unavailable") || lower.contains("network") {
+        return "Transcription failed. Check your connection and try again.".to_string();
+    }
+
+    "Transcription failed. Please try again.".to_string()
+}
+
 /// Check if pill should be hidden based on pill_indicator_mode setting.
 /// Returns true if pill should be hidden, false if it should stay visible.
 /// Called when transitioning to idle state (after recording ends).
@@ -178,9 +210,16 @@ mod tests {
 /// Play a system sound to confirm recording start (macOS only)
 #[cfg(target_os = "macos")]
 fn play_recording_start_sound() {
-    std::thread::spawn(|| {
+    play_macos_system_sound("Purr", 0.32);
+}
+
+#[cfg(target_os = "macos")]
+fn play_macos_system_sound(name: &str, volume: f32) {
+    let sound_name = name.to_string();
+    std::thread::spawn(move || {
         let _ = std::process::Command::new("afplay")
-            .arg("/System/Library/Sounds/Tink.aiff")
+            .args(["-v", &format!("{volume:.2}")])
+            .arg(format!("/System/Library/Sounds/{sound_name}.aiff"))
             .spawn();
     });
 }
@@ -192,9 +231,8 @@ fn play_recording_start_sound() {
     const CREATE_NO_WINDOW: u32 = 0x08000000;
 
     std::thread::spawn(|| {
-        // Use PowerShell to play a system sound on Windows (hidden console)
         let _ = std::process::Command::new("powershell")
-            .args(["-c", "[console]::beep(800, 100)"])
+            .args(["-c", "[System.Media.SystemSounds]::Asterisk.Play()"])
             .creation_flags(CREATE_NO_WINDOW)
             .spawn();
     });
@@ -208,12 +246,8 @@ fn play_recording_start_sound() {
 /// Play a system sound to confirm recording end (macOS only)
 #[cfg(target_os = "macos")]
 fn play_recording_end_sound() {
-    std::thread::spawn(|| {
-        // Use a different sound for recording end - Pop sound
-        let _ = std::process::Command::new("afplay")
-            .arg("/System/Library/Sounds/Pop.aiff")
-            .spawn();
-    });
+    // This cue marks the handoff from listening to transcription.
+    play_macos_system_sound("Bottle", 0.4);
 }
 
 /// Play a system sound to confirm recording end (Windows)
@@ -223,9 +257,8 @@ fn play_recording_end_sound() {
     const CREATE_NO_WINDOW: u32 = 0x08000000;
 
     std::thread::spawn(|| {
-        // Use PowerShell with a lower frequency tone for recording end (hidden console)
         let _ = std::process::Command::new("powershell")
-            .args(["-c", "[console]::beep(600, 100)"])
+            .args(["-c", "[System.Media.SystemSounds]::Exclamation.Play()"])
             .creation_flags(CREATE_NO_WINDOW)
             .spawn();
     });
@@ -852,15 +885,16 @@ pub async fn start_recording(
 
         log_file_operation("RECORDING_START", audio_path_str, false, None, None);
 
-        // Start recording and get audio level receiver
-        let audio_level_rx =
+        // Start recording and get the per-recording event receivers
+        let (audio_level_rx, inactivity_event_rx) =
             match recorder.start_recording(audio_path_str, selected_microphone.clone()) {
                 Ok(_) => {
                     // Verify recording actually started
                     let is_recording = recorder.is_recording();
 
-                    // Get the audio level receiver before potentially dropping recorder
+                    // Get the event receivers before potentially dropping recorder
                     let rx = recorder.take_audio_level_receiver();
+                    let timeout_rx = recorder.take_inactivity_event_receiver();
 
                     if !is_recording {
                         drop(recorder); // Release the lock if we're erroring out
@@ -908,7 +942,7 @@ pub async fn start_recording(
                         system_monitor::log_resources_before_operation("RECORDING_START");
                     }
 
-                    rx // Return the audio level receiver
+                    (rx, timeout_rx)
                 }
                 Err(e) => {
                     log_failed("RECORDER_START", &e);
@@ -974,6 +1008,41 @@ pub async fn start_recording(
                 }
             });
         }
+
+        // Start inactivity timeout event monitoring for pill UI
+        if let Some(inactivity_event_rx) = inactivity_event_rx {
+            let app_for_timeout = app.clone();
+            std::thread::spawn(move || {
+                while let Ok(event) = inactivity_event_rx.recv() {
+                    match event {
+                        RecorderInactivityEvent::Countdown(seconds_remaining) => {
+                            let _ = emit_to_window(
+                                &app_for_timeout,
+                                "pill",
+                                "inactivity-timeout-warning",
+                                serde_json::json!({ "seconds_remaining": seconds_remaining }),
+                            );
+                        }
+                        RecorderInactivityEvent::Clear => {
+                            let _ = emit_to_window(
+                                &app_for_timeout,
+                                "pill",
+                                "inactivity-timeout-cleared",
+                                serde_json::json!({}),
+                            );
+                        }
+                        RecorderInactivityEvent::TimeoutExceeded => {
+                            let _ = emit_to_window(
+                                &app_for_timeout,
+                                "pill",
+                                "inactivity-timeout-exceeded",
+                                serde_json::json!({}),
+                            );
+                        }
+                    }
+                }
+            });
+        }
     } // MutexGuard dropped here
 
     // Now perform async operations after mutex is released
@@ -983,6 +1052,39 @@ pub async fn start_recording(
 
     // Update state to recording
     update_recording_state(&app, RecordingState::Recording, None);
+
+    // Auto-finish the recording flow when the recorder thread stops itself,
+    // for example after an inactivity timeout.
+    let app_for_auto_stop = app.clone();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+            let current_state = app_for_auto_stop.state::<AppState>().get_current_state();
+            if !matches!(
+                current_state,
+                RecordingState::Recording | RecordingState::Starting | RecordingState::Stopping
+            ) {
+                break;
+            }
+
+            let recorder_state = app_for_auto_stop.state::<RecorderState>();
+            let should_auto_stop = {
+                let guard = recorder_state.inner().0.lock();
+                guard.map(|recorder| recorder.has_finished_recording()).unwrap_or(false)
+            };
+
+            if should_auto_stop && current_state == RecordingState::Recording {
+                log::info!("Recorder stopped itself; finalizing stop_recording flow");
+                if let Err(e) =
+                    stop_recording(app_for_auto_stop.clone(), recorder_state).await
+                {
+                    log::error!("Auto stop_recording flow failed: {}", e);
+                }
+                break;
+            }
+        }
+    });
 
     // If a toggle-stop was requested while starting, honor it immediately after entering Recording
     if app_state
@@ -1103,6 +1205,7 @@ pub async fn stop_recording(
 
     // Stop recording (lock only within this scope to stay Send)
     log::info!("🛑 Stopping recording...");
+    let stop_message;
     {
         let mut recorder = state
             .inner()
@@ -1119,7 +1222,7 @@ pub async fn stop_recording(
             return Ok("".to_string());
         }
 
-        let stop_message = recorder
+        stop_message = recorder
             .stop_recording()
             .map_err(|e| format!("Failed to stop recording: {}", e))?;
         log::info!("{}", stop_message);
@@ -1145,11 +1248,14 @@ pub async fn stop_recording(
             stop_start.elapsed().as_millis() as u64,
         );
 
-        // Emit pill toast if recording was stopped due to silence
-        if stop_message.contains("silence") {
-            pill_toast(&app, "No sound detected", 1000);
-        }
+        // Do not show "No sound detected" at stop time.
+        // Silence auto-stop can happen after valid speech, and the transcription
+        // result path below is the reliable place to decide whether the user
+        // actually said nothing.
     } // MutexGuard dropped here BEFORE any await
+
+    let suppress_output_action_due_to_timeout =
+        stop_message.contains("inactivity timeout");
 
     // Unregister ESC key
     match "Escape".parse::<tauri_plugin_global_shortcut::Shortcut>() {
@@ -1330,7 +1436,7 @@ pub async fn stop_recording(
                     &app,
                     &audio_path,
                     "No speech recognition models installed",
-                    "Please download at least one speech recognition model from Models to use VoiceTypr.",
+                    "Please download at least one speech recognition model from Models to use Cyberdriver.",
                 )
                 .await;
             }
@@ -1561,11 +1667,25 @@ pub async fn stop_recording(
     let engine_selection_for_task = engine_selection;
     let language_for_task = language.clone();
     let selected_model_name_for_task = selected_model_name.clone();
+    let suppress_output_action_for_task = suppress_output_action_due_to_timeout;
 
     // Spawn and track the transcription task
     let app_for_task = app.clone();
     let task_handle = tokio::spawn(async move {
         log::debug!("Transcription task started");
+
+        if suppress_output_action_for_task {
+            let _ = emit_to_window(
+                &app_for_task,
+                "pill",
+                "inactivity-timeout-exceeded",
+                serde_json::json!({}),
+            );
+
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+
+            let _ = crate::commands::window::hide_pill_widget(app_for_task.clone()).await;
+        }
 
         // Update state to transcribing
         update_recording_state(&app_for_task, RecordingState::Transcribing, None);
@@ -1600,17 +1720,18 @@ pub async fn stop_recording(
                     match cache.get_or_create(model_path) {
                         Ok(t) => t,
                         Err(e) => {
+                            let user_message = friendly_transcription_error_message(&e);
                             update_recording_state(
                                 &app_for_task,
                                 RecordingState::Error,
-                                Some(e.clone()),
+                                Some(user_message.clone()),
                             );
                             if should_hide_pill(&app_for_task).await {
                                 let _ =
                                     crate::commands::window::hide_pill_widget(app_for_task.clone())
                                         .await;
                             }
-                            pill_toast(&app_for_task, &e, 1500);
+                            pill_toast(&app_for_task, &user_message, 1800);
                             return;
                         }
                     }
@@ -1671,12 +1792,13 @@ pub async fn stop_recording(
                 let parakeet_manager = app_for_task.state::<ParakeetManager>();
                 if let Err(e) = parakeet_manager.load_model(&app_for_task, model_name).await {
                     let message = format!("Parakeet model load failed: {e}");
+                    let user_message = friendly_transcription_error_message(&message);
                     update_recording_state(
                         &app_for_task,
                         RecordingState::Error,
-                        Some(message.clone()),
+                        Some(user_message.clone()),
                     );
-                    pill_toast(&app_for_task, &message, 1500);
+                    pill_toast(&app_for_task, &user_message, 1800);
                     return;
                 }
 
@@ -1865,59 +1987,65 @@ pub async fn stop_recording(
                     };
 
                     let app_state = app_for_process.state::<AppState>();
-                    match output_mode {
-                        VoiceOutputMode::Dictation => {
-                            // Hide pill window first (only if show_pill_indicator is false)
-                            if should_hide_pill(&app_for_process).await {
-                                if let Some(window_manager) = app_state.get_window_manager() {
-                                    if let Err(e) = window_manager.hide_pill_window().await {
-                                        log::error!("Failed to hide pill window: {}", e);
-                                    }
-                                } else {
-                                    log::error!("WindowManager not initialized");
-                                }
-                            }
-
-                            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-
-                            match crate::commands::text::insert_text(
-                                app_for_process.clone(),
-                                final_text.clone(),
-                            )
-                            .await
-                            {
-                                Ok(_) => log::debug!("Text inserted at cursor successfully"),
-                                Err(e) => {
-                                    log::error!("Failed to insert text: {}", e);
-
-                                    if e.contains("accessibility") || e.contains("permission") {
-                                        pill_toast(
-                                            &app_for_process,
-                                            "Text copied - grant permission to auto-paste",
-                                            1500,
-                                        );
+                    if suppress_output_action_for_task {
+                        log::info!(
+                            "Skipping paste/task submission because recording ended due to inactivity timeout"
+                        );
+                    } else {
+                        match output_mode {
+                            VoiceOutputMode::Dictation => {
+                                // Hide pill window first (only if show_pill_indicator is false)
+                                if should_hide_pill(&app_for_process).await {
+                                    if let Some(window_manager) = app_state.get_window_manager() {
+                                        if let Err(e) = window_manager.hide_pill_window().await {
+                                            log::error!("Failed to hide pill window: {}", e);
+                                        }
                                     } else {
-                                        pill_toast(
-                                            &app_for_process,
-                                            "Paste failed - text in clipboard",
-                                            1500,
-                                        );
+                                        log::error!("WindowManager not initialized");
+                                    }
+                                }
+
+                                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+                                match crate::commands::text::insert_text(
+                                    app_for_process.clone(),
+                                    final_text.clone(),
+                                )
+                                .await
+                                {
+                                    Ok(_) => log::debug!("Text inserted at cursor successfully"),
+                                    Err(e) => {
+                                        log::error!("Failed to insert text: {}", e);
+
+                                        if e.contains("accessibility") || e.contains("permission") {
+                                            pill_toast(
+                                                &app_for_process,
+                                                "Text copied - grant permission to auto-paste",
+                                                1500,
+                                            );
+                                        } else {
+                                            pill_toast(
+                                                &app_for_process,
+                                                "Paste failed - text in clipboard",
+                                                1500,
+                                            );
+                                        }
                                     }
                                 }
                             }
-                        }
-                        VoiceOutputMode::ComputerUse => {
-                            match submit_computer_use_task(&app_for_process, &final_text).await {
-                                Ok(_) => {
-                                    log::info!("Computer use task submitted successfully");
-                                }
-                                Err(e) => {
-                                    log::error!("Failed to submit computer use task: {}", e);
-                                    pill_toast(&app_for_process, "Task submission failed", 1500);
-                                    let _ = app_for_process.emit(
-                                        "computer-task-failed",
-                                        serde_json::json!({ "error": e.clone() }),
-                                    );
+                            VoiceOutputMode::ComputerUse => {
+                                match submit_computer_use_task(&app_for_process, &final_text).await {
+                                    Ok(_) => {
+                                        log::info!("Computer use task submitted successfully");
+                                    }
+                                    Err(e) => {
+                                        log::error!("Failed to submit computer use task: {}", e);
+                                        pill_toast(&app_for_process, "Task submission failed", 1500);
+                                        let _ = app_for_process.emit(
+                                            "computer-task-failed",
+                                            serde_json::json!({ "error": e.clone() }),
+                                        );
+                                    }
                                 }
                             }
                         }
@@ -1975,7 +2103,8 @@ pub async fn stop_recording(
                     }
 
                     // Emit specific feedback via pill toast
-                    pill_toast(&app_for_task, &e, 1000);
+                    let user_message = friendly_transcription_error_message(&e);
+                    pill_toast(&app_for_task, &user_message, 1200);
 
                     // Hide pill after showing feedback
                     let app_for_reset = app_for_task.clone();
@@ -1995,11 +2124,16 @@ pub async fn stop_recording(
                         update_recording_state(&app_for_reset, RecordingState::Idle, None);
                     });
                 } else {
+                    let user_message = friendly_transcription_error_message(&e);
                     // For other errors, show error state briefly
-                    update_recording_state(&app_for_task, RecordingState::Error, Some(e.clone()));
+                    update_recording_state(
+                        &app_for_task,
+                        RecordingState::Error,
+                        Some(user_message.clone()),
+                    );
 
                     // Emit error via pill toast
-                    pill_toast(&app_for_task, &e, 1500);
+                    pill_toast(&app_for_task, &user_message, 1800);
 
                     // Transition back to Idle after a delay
                     // This ensures we don't get stuck in Error state

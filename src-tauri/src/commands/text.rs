@@ -5,8 +5,14 @@ use std::thread;
 use std::time::Duration;
 use tauri_plugin_store::StoreExt;
 
-// Import rdev for more reliable keyboard simulation
+// Import rdev for non-macOS keyboard simulation paths
+#[cfg(not(target_os = "macos"))]
 use rdev::{simulate, EventType, Key as RdevKey, SimulateError};
+
+#[cfg(target_os = "macos")]
+use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation, KeyCode};
+#[cfg(target_os = "macos")]
+use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 
 // Import Enigo only for non-macOS platforms where it's used
 #[cfg(not(target_os = "macos"))]
@@ -32,16 +38,6 @@ pub async fn insert_text(app: tauri::AppHandle, text: String) -> Result<(), Stri
     // Small delay to ensure the app doesn't interfere with text insertion
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    // Check accessibility permission
-    #[cfg(target_os = "macos")]
-    let has_accessibility_permission = {
-        use crate::commands::permissions::check_accessibility_permission;
-        check_accessibility_permission().await?
-    };
-
-    #[cfg(not(target_os = "macos"))]
-    let has_accessibility_permission = true;
-
     // Move to a blocking task since clipboard operations are synchronous
     let keep_transcription_in_clipboard = {
         let store = app
@@ -58,7 +54,6 @@ pub async fn insert_text(app: tauri::AppHandle, text: String) -> Result<(), Stri
         // This function handles both copying to clipboard and pasting at cursor
         insert_via_clipboard(
             text,
-            has_accessibility_permission,
             Some(app),
             keep_transcription_in_clipboard,
         )
@@ -84,8 +79,7 @@ pub async fn copy_text_to_clipboard(text: String) -> Result<(), String> {
 
 fn insert_via_clipboard(
     text: String,
-    has_accessibility_permission: bool,
-    app_handle: Option<tauri::AppHandle>,
+    _app_handle: Option<tauri::AppHandle>,
     keep_transcription_in_clipboard: bool,
 ) -> Result<(), String> {
     // This function handles both copying text to clipboard AND pasting it at cursor
@@ -114,73 +108,85 @@ fn insert_via_clipboard(
             .set_text(&text)
             .map_err(|e| format!("Failed to set clipboard: {}", e))?;
 
-        log::info!("Set clipboard content: {}", text);
+        log::info!(
+            "Set clipboard content for insertion (chars={})",
+            text.chars().count()
+        );
 
-        // Small delay to ensure clipboard is ready
-        thread::sleep(Duration::from_millis(50));
+        // Large transcripts need more time for the pasteboard update to propagate.
+        thread::sleep(Duration::from_millis(clipboard_settle_delay_ms(&text)));
 
         // Verify clipboard content was set
         if let Ok(clipboard_check) = clipboard.get_text() {
-            log::info!("Clipboard content verified: {}", clipboard_check);
-        }
-
-        // Check if we have accessibility permissions before attempting to paste
-        if !has_accessibility_permission {
-            log::warn!(
-                "No accessibility permission - text copied to clipboard but cannot paste automatically"
+            log::debug!(
+                "Clipboard content verified (chars={})",
+                clipboard_check.chars().count()
             );
-            // Return a specific error so the caller knows it's an accessibility issue
-            return Err("No accessibility permission - text copied to clipboard. Please paste manually or grant accessibility permission.".to_string());
         }
 
-        // Try to paste using Cmd+V (macOS) with panic protection
-        // Add delay since pill was just hidden
+        // Try the most reliable platform-specific paste path first, then fall
+        // back to the secondary mechanism if it fails.
+        #[cfg(target_os = "macos")]
+        {
+            let applescript_result =
+                panic::catch_unwind(AssertUnwindSafe(try_paste_with_applescript));
 
-        // First try with rdev, fallback to AppleScript if it fails
-        let rdev_result = try_paste_with_rdev();
-
-        match rdev_result {
-            Ok(_) => {
-                log::info!("Successfully pasted with rdev");
+            match applescript_result {
+                Ok(Ok(_)) => {
+                    log::info!("Successfully pasted with AppleScript");
+                }
+                Ok(Err(applescript_error)) => {
+                    log::warn!(
+                        "AppleScript paste failed: {}, trying CoreGraphics fallback",
+                        applescript_error
+                    );
+                    match try_paste_with_rdev() {
+                        Ok(_) => {
+                            log::info!("Successfully pasted with CoreGraphics fallback");
+                        }
+                        Err(fallback_error) => {
+                            log::warn!(
+                                "CoreGraphics paste fallback failed: {}, text remains in clipboard",
+                                fallback_error
+                            );
+                            return Err(format!(
+                                "Paste failed - text copied to clipboard. {}",
+                                friendly_paste_error_message(&applescript_error)
+                            ));
+                        }
+                    }
+                }
+                Err(panic_err) => {
+                    log::error!(
+                        "PANIC during AppleScript paste: {:?}, trying CoreGraphics fallback",
+                        panic_err
+                    );
+                    match try_paste_with_rdev() {
+                        Ok(_) => {
+                            log::info!("Successfully pasted with CoreGraphics fallback");
+                        }
+                        Err(_) => {
+                            return Err(
+                                "Paste failed - text copied to clipboard. Please paste manually."
+                                    .to_string(),
+                            );
+                        }
+                    }
+                }
             }
-            Err(e) => {
-                log::warn!("rdev paste failed: {}, trying AppleScript fallback", e);
+        }
 
-                // Fallback to AppleScript
-                let paste_result =
-                    panic::catch_unwind(AssertUnwindSafe(try_paste_with_applescript));
+        #[cfg(not(target_os = "macos"))]
+        {
+            let rdev_result = try_paste_with_rdev();
 
-                match paste_result {
-                    Ok(Ok(_)) => {
-                        log::info!("Successfully pasted with AppleScript");
-                    }
-                    Ok(Err(e)) => {
-                        log::warn!("AppleScript paste failed: {}, text remains in clipboard", e);
-                        // Notify user through pill toast that paste failed but text is in clipboard
-                        if let Some(app) = &app_handle {
-                            crate::commands::audio::pill_toast(
-                                app,
-                                "Paste failed - copied to clipboard",
-                                1500,
-                            );
-                        }
-                        // Don't fail - text is still in clipboard for manual paste
-                    }
-                    Err(panic_err) => {
-                        log::error!(
-                            "PANIC during paste: {:?}, text remains in clipboard",
-                            panic_err
-                        );
-                        // Notify user through pill toast about the failure
-                        if let Some(app) = &app_handle {
-                            crate::commands::audio::pill_toast(
-                                app,
-                                "Paste failed - copied to clipboard",
-                                1500,
-                            );
-                        }
-                        // Don't fail - text is still in clipboard for manual paste
-                    }
+            match rdev_result {
+                Ok(_) => {
+                    log::info!("Successfully pasted with keyboard simulation");
+                }
+                Err(e) => {
+                    log::warn!("Paste failed: {}, text remains in clipboard", e);
+                    return Err(format!("Paste failed - text copied to clipboard. {}", e));
                 }
             }
         }
@@ -191,11 +197,21 @@ fn insert_via_clipboard(
     if !keep_transcription_in_clipboard {
         if insertion_result.is_ok() {
             if let Some(previous_text) = previous_clipboard_text {
-                if let Err(e) = clipboard.set_text(&previous_text) {
-                    log::error!("Failed to restore original clipboard text: {}", e);
-                } else {
-                    log::debug!("Restored original clipboard text after paste");
-                }
+                thread::spawn(move || {
+                    thread::sleep(Duration::from_millis(500));
+                    match Clipboard::new() {
+                        Ok(mut restore_clipboard) => {
+                            if let Err(e) = restore_clipboard.set_text(&previous_text) {
+                                log::error!("Failed to restore original clipboard text: {}", e);
+                            } else {
+                                log::debug!("Restored original clipboard text after delayed paste");
+                            }
+                        }
+                        Err(e) => {
+                            log::error!("Failed to initialize clipboard for restoration: {}", e);
+                        }
+                    }
+                });
             } else {
                 log::debug!(
                     "No plain-text clipboard content to restore; leaving clipboard unchanged"
@@ -209,6 +225,23 @@ fn insert_via_clipboard(
     }
 
     insertion_result
+}
+
+fn friendly_paste_error_message(error: &str) -> String {
+    let lower = error.to_lowercase();
+
+    if lower.contains("1743")
+        || lower.contains("not authorized")
+        || lower.contains("not permitted")
+    {
+        return "Auto-paste permission is missing.".to_string();
+    }
+
+    if lower.contains("assistive access") || lower.contains("accessibility") {
+        return "Accessibility permission is missing.".to_string();
+    }
+
+    "Please paste manually.".to_string()
 }
 
 fn try_paste_with_applescript() -> Result<(), String> {
@@ -319,7 +352,7 @@ fn try_paste_with_rdev() -> Result<(), String> {
     let result = {
         #[cfg(target_os = "macos")]
         {
-            paste_mac().map_err(|e| format!("Failed to paste on macOS: {:?}", e))
+            paste_mac().map_err(|e| format!("Failed to paste on macOS: {}", e))
         }
 
         #[cfg(target_os = "windows")]
@@ -356,61 +389,59 @@ fn try_paste_with_rdev() -> Result<(), String> {
 }
 
 #[cfg(target_os = "macos")]
-fn paste_mac() -> Result<(), SimulateError> {
-    log::debug!("Starting macOS paste simulation with rdev");
+fn paste_mac() -> Result<(), String> {
+    const KEY_V: u16 = 9;
+    log::debug!("Starting macOS paste simulation with CoreGraphics");
 
-    // Add initial delay to match Windows timing for better reliability
-    thread::sleep(Duration::from_millis(50));
+    let source = CGEventSource::new(CGEventSourceStateID::CombinedSessionState)
+        .map_err(|_| "Failed to create CoreGraphics event source".to_string())?;
 
-    // Try paste with retry logic
+    let send = |keycode: u16, keydown: bool, flags: CGEventFlags| -> Result<(), String> {
+        let event = CGEvent::new_keyboard_event(source.clone(), keycode, keydown)
+            .map_err(|_| format!("Failed to create keyboard event for keycode {}", keycode))?;
+        event.set_flags(flags);
+        event.post(CGEventTapLocation::HID);
+        thread::sleep(Duration::from_millis(35));
+        Ok(())
+    };
+
     for attempt in 1..=2 {
-        log::debug!("macOS paste attempt {}/2", attempt);
-
         let result = (|| {
-            // Press Cmd (Meta) key first and hold it
-            log::debug!("Pressing MetaLeft (Cmd)");
-            simulate(&EventType::KeyPress(RdevKey::MetaLeft))?;
-            thread::sleep(Duration::from_millis(50)); // Give OS time to register modifier
-
-            // While Cmd is held, press V
-            log::debug!("Pressing KeyV while Cmd is held");
-            simulate(&EventType::KeyPress(RdevKey::KeyV))?;
-            thread::sleep(Duration::from_millis(50));
-
-            // Release V first
-            log::debug!("Releasing KeyV");
-            simulate(&EventType::KeyRelease(RdevKey::KeyV))?;
-            thread::sleep(Duration::from_millis(50));
-
-            // Then release Cmd
-            log::debug!("Releasing MetaLeft (Cmd)");
-            simulate(&EventType::KeyRelease(RdevKey::MetaLeft))?;
-            thread::sleep(Duration::from_millis(50));
-
-            Ok::<(), SimulateError>(())
+            send(KeyCode::COMMAND, true, CGEventFlags::CGEventFlagCommand)?;
+            send(KEY_V, true, CGEventFlags::CGEventFlagCommand)?;
+            send(KEY_V, false, CGEventFlags::CGEventFlagCommand)?;
+            send(KeyCode::COMMAND, false, CGEventFlags::CGEventFlagCommand)?;
+            Ok::<(), String>(())
         })();
 
         match result {
             Ok(_) => {
-                log::debug!("macOS paste simulation completed on attempt {}", attempt);
+                log::debug!(
+                    "macOS CoreGraphics paste simulation completed on attempt {}",
+                    attempt
+                );
                 return Ok(());
             }
-            Err(e) if attempt < 2 => {
+            Err(error) if attempt < 2 => {
                 log::warn!(
-                    "macOS paste attempt {} failed: {:?}, retrying...",
+                    "macOS CoreGraphics paste attempt {} failed: {}, retrying...",
                     attempt,
-                    e
+                    error
                 );
-                thread::sleep(Duration::from_millis(50));
+                thread::sleep(Duration::from_millis(75));
             }
-            Err(e) => {
-                log::error!("macOS paste failed after 2 attempts: {:?}", e);
-                return Err(e);
+            Err(error) => {
+                log::error!(
+                    "macOS CoreGraphics paste failed after {} attempts: {}",
+                    attempt,
+                    error
+                );
+                return Err(error);
             }
         }
     }
 
-    unreachable!()
+    Err("macOS CoreGraphics paste failed unexpectedly".to_string())
 }
 
 #[cfg(target_os = "windows")]
@@ -464,4 +495,9 @@ fn paste_linux() -> Result<(), SimulateError> {
     send_key_event(&EventType::KeyRelease(RdevKey::ControlLeft))?;
     log::debug!("Linux paste simulation completed");
     Ok(())
+}
+
+fn clipboard_settle_delay_ms(text: &str) -> u64 {
+    let char_count = text.chars().count() as u64;
+    (75 + (char_count / 24)).min(350)
 }

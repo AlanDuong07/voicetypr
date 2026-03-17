@@ -8,6 +8,12 @@ use std::sync::atomic::Ordering;
 use tauri::Manager;
 use tauri_plugin_global_shortcut::{Shortcut, ShortcutState};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HotkeyTarget {
+    Dictation,
+    ComputerUse,
+}
+
 /// Handle global shortcut events for recording
 ///
 /// This is the main entry point for all global shortcut handling.
@@ -78,19 +84,51 @@ pub fn handle_global_shortcut(
     };
 
     if is_computer_use_shortcut && event_state == ShortcutState::Pressed {
-        if let Ok(mut mode_guard) = app_state.voice_output_mode.lock() {
-            *mode_guard = VoiceOutputMode::ComputerUse;
-        }
-        let current_state = get_recording_state(app);
-        handle_toggle_mode(app, &app_state, current_state, event_state);
+        handle_hotkey_target(app, HotkeyTarget::ComputerUse, event_state);
     } else if should_handle {
-        if let Ok(mut mode_guard) = app_state.voice_output_mode.lock() {
-            *mode_guard = VoiceOutputMode::Dictation;
-        }
-        let current_state = get_recording_state(app);
-        handle_recording_shortcut(app, &app_state, recording_mode, current_state, event_state);
+        handle_hotkey_target(app, HotkeyTarget::Dictation, event_state);
     } else if !is_recording_shortcut && !is_ptt_shortcut && !is_computer_use_shortcut {
         handle_non_recording_shortcut(app, shortcut, event_state);
+    }
+}
+
+pub fn handle_hotkey_target(
+    app: &tauri::AppHandle,
+    target: HotkeyTarget,
+    event_state: ShortcutState,
+) {
+    let Some(app_state) = app.try_state::<AppState>() else {
+        log::warn!("Hotkey target triggered before AppState initialized");
+        return;
+    };
+
+    match target {
+        HotkeyTarget::ComputerUse => {
+            if event_state != ShortcutState::Pressed {
+                return;
+            }
+            if let Ok(mut mode_guard) = app_state.voice_output_mode.lock() {
+                *mode_guard = VoiceOutputMode::ComputerUse;
+            }
+            let current_state = get_recording_state(app);
+            handle_toggle_mode(app, &app_state, current_state, event_state);
+        }
+        HotkeyTarget::Dictation => {
+            if let Ok(mut mode_guard) = app_state.voice_output_mode.lock() {
+                *mode_guard = VoiceOutputMode::Dictation;
+            }
+
+            let recording_mode = {
+                if let Ok(mode_guard) = app_state.recording_mode.lock() {
+                    *mode_guard
+                } else {
+                    RecordingMode::Toggle
+                }
+            };
+
+            let current_state = get_recording_state(app);
+            handle_recording_shortcut(app, &app_state, recording_mode, current_state, event_state);
+        }
     }
 }
 

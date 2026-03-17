@@ -295,7 +295,7 @@ export class UpdateService {
       console.log('Update downloaded but session active - will relaunch when session ends');
       this.pendingRelaunch = true;
       toast.dismiss(toastId);
-      await this.sendSystemNotification('Update Ready', 'VoiceTypr will restart when recording ends');
+      await this.sendSystemNotification('Update Ready', 'Cyberdriver will restart when recording ends');
       return;
     }
 
@@ -323,7 +323,7 @@ export class UpdateService {
         await update.downloadAndInstall();
         // Notify if relaunch will be deferred due to active session
         if (this.isSessionActive) {
-          await this.sendSystemNotification('Update Ready', 'VoiceTypr will restart when recording ends');
+          await this.sendSystemNotification('Update Ready', 'Cyberdriver will restart when recording ends');
         }
         await this.performRelaunch();
       } catch (error) {

@@ -128,6 +128,26 @@ voicetypr/
 
 ## 🔧 Troubleshooting
 
+### Fresh Local Reset (macOS Dev)
+
+If you want to simulate a fresh local first-run of Cyberdriver on your Mac, you can use:
+
+```bash
+bash ./scripts/reset-cyberdriver-macos.sh
+```
+
+This script:
+- quits any running `Cyberdriver` / `Voicetypr` instances
+- removes known local app state, preferences, caches, launch agents, and crash reporter entries
+- resets macOS `Accessibility`, `Microphone`, `ScreenCapture`, and `AppleEvents` permissions for the known bundle IDs used by this repo
+
+Use this when you specifically want to re-test:
+- first-run onboarding
+- permission prompts
+- menu bar / app state behavior from a clean slate
+
+You do **not** need to run this routinely. For normal development or normal usage, it is usually safe to just reopen the same app bundle. A full reset is mainly useful when testing permission flows or after changing bundle identifiers / app identity.
+
 ### Windows GPU Acceleration
 
 VoiceTypr automatically detects and uses your GPU for faster transcription. If you're experiencing slower performance:

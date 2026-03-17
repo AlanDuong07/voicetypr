@@ -29,8 +29,7 @@ pub async fn try_start_device_watcher_if_ready(app: &AppHandle) {
     // Check mic permission (using the same check as the permission command)
     #[cfg(target_os = "macos")]
     let has_mic_permission = {
-        use tauri_plugin_macos_permissions::check_microphone_permission;
-        check_microphone_permission().await
+        crate::commands::permissions::macos_microphone_is_trusted()
     };
 
     #[cfg(not(target_os = "macos"))]

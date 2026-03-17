@@ -137,7 +137,7 @@ export function HelpSection() {
   };
 
   const handleEmailSupport = () => {
-    const subject = "VoiceTypr Support Request";
+    const subject = "Cyberdriver Support Request";
     const body = `
 ${diagnostics}
 
@@ -162,7 +162,7 @@ Actual behavior:
   };
 
   const handleOpenInGmail = async () => {
-    const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=support@voicetypr.com&su=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(emailBody)}`;
+    const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=founders@cyberdesk.io&su=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(emailBody)}`;
     try {
       await open(gmailUrl);
       setShowEmailModal(false);
@@ -174,7 +174,7 @@ Actual behavior:
   };
 
   const handleOpenInDefaultClient = async () => {
-    const mailtoUrl = `mailto:support@voicetypr.com?subject=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(emailBody)}`;
+    const mailtoUrl = `mailto:founders@cyberdesk.io?subject=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(emailBody)}`;
     try {
       await open(mailtoUrl);
       setShowEmailModal(false);
@@ -187,7 +187,7 @@ Actual behavior:
 
 
   const handleXSupport = async () => {
-    const xUrl = 'https://x.com/voicetypr';
+    const xUrl = 'https://docs.cyberdesk.io';
     try {
       await open(xUrl);
     } catch (error) {
@@ -292,9 +292,9 @@ Actual behavior:
                     <XIcon className="h-4 w-4" />
                   </div>
                   <div className="text-left">
-                    <p className="text-sm font-medium">Follow us on X</p>
+                    <p className="text-sm font-medium">Cyberdesk Docs</p>
                     <p className="text-xs text-muted-foreground">
-                      @voicetypr - Get updates and support
+                      Installation, guides, and support docs
                     </p>
                   </div>
                 </div>
@@ -367,7 +367,7 @@ Actual behavior:
           {/* System Info Footer */}
           <div className="pt-4">
             <div className="flex items-center justify-between text-xs text-muted-foreground">
-              <span>VoiceTypr v{appVersion}</span>
+              <span>Cyberdriver v{appVersion}</span>
               <span>{platformName}</span>
             </div>
           </div>

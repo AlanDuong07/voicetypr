@@ -77,7 +77,7 @@ export function ShareStatsModal({ open, onOpenChange, stats }: ShareStatsModalPr
     ctx.font = "bold 96px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
     ctx.fillStyle = "#ffffff";
     ctx.textAlign = "center";
-    ctx.fillText("My VoiceTypr Stats", canvas.width / 2, 200);
+    ctx.fillText("My Cyberdriver Stats", canvas.width / 2, 200);
 
     // Best streak above the grid (if there's a longest streak)
     if (stats.longestStreak > 0) {
@@ -164,7 +164,7 @@ export function ShareStatsModal({ open, onOpenChange, stats }: ShareStatsModalPr
     ctx.font = "56px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
     ctx.fillStyle = "rgba(255, 255, 255, 0.6)";
     ctx.textAlign = "center";
-    ctx.fillText("voicetypr.com", canvas.width / 2, canvas.height - 80);
+    ctx.fillText("cyberdesk.io", canvas.width / 2, canvas.height - 80);
 
     // Convert canvas to data URL
     const dataUrl = canvas.toDataURL("image/png");

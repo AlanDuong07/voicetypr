@@ -190,6 +190,8 @@ impl ScreenshotBackend {
   }
 }
 const SCREENSHOT_CONTENT_TYPE: &str = "image/png";
+const DEFAULT_SCREENSHOT_WIDTH: u32 = 1024;
+const DEFAULT_SCREENSHOT_HEIGHT: u32 = 768;
 
 async fn get_screenshot(
   State(state): State<ApiState>,
@@ -1019,7 +1021,7 @@ fn determine_target_dimensions(
   if width.is_some() || height.is_some() {
     return None;
   }
-  get_logical_dimensions()
+  Some((DEFAULT_SCREENSHOT_WIDTH, DEFAULT_SCREENSHOT_HEIGHT))
 }
 
 fn capture_screen(
@@ -1028,13 +1030,10 @@ fn capture_screen(
   mode: ScaleMode,
 ) -> std::result::Result<ScreenshotResult, String> {
   let target_hint = determine_target_dimensions(width, height);
-  let capture_target = if matches!(mode, ScaleMode::Exact) {
-    target_hint
-  } else {
-    None
-  };
   let capture_start = Instant::now();
-  let capture = capture_backend_image(select_backend(), capture_target)?;
+  // Match cyberdriver.py: always capture at native resolution first,
+  // then apply scaling in our own pipeline.
+  let capture = capture_backend_image(select_backend(), None)?;
   let capture_ms = capture_start.elapsed().as_secs_f64() * 1000.0;
 
   let mut dyn_image = capture.image;
@@ -1049,14 +1048,6 @@ fn capture_screen(
     }
   };
   let (captured_w, captured_h) = dyn_image.dimensions();
-  let skip_auto_resize = matches!(capture.backend, ScreenshotBackend::XCap)
-    && width.is_none()
-    && height.is_none()
-    && matches!(mode, ScaleMode::Exact);
-  if skip_auto_resize {
-    target_width = captured_w;
-    target_height = captured_h;
-  }
   let resize_start = Instant::now();
   let needs_resize = target_width != captured_w || target_height != captured_h;
   let (filter, resize_ms) = if needs_resize {
@@ -1154,16 +1145,30 @@ fn capture_screen_screencapturekit(
   use screencapturekit::screenshot_manager::SCScreenshotManager;
   use screencapturekit::shareable_content::SCShareableContentInfo;
 
-  let content = SCShareableContent::get().map_err(|err| err.to_string())?;
+  let content = SCShareableContent::create()
+    .with_on_screen_windows_only(true)
+    .with_exclude_desktop_windows(true)
+    .get()
+    .map_err(|err| err.to_string())?;
   let display = content
     .displays()
     .into_iter()
     .next()
     .ok_or_else(|| "No displays found".to_string())?;
-  let filter = SCContentFilter::create()
-    .with_display(&display)
-    .with_excluding_windows(&[])
-    .build();
+  let applications = content.applications();
+  let app_refs = applications.iter().collect::<Vec<_>>();
+
+  let filter = if app_refs.is_empty() {
+    SCContentFilter::create()
+      .with_display(&display)
+      .with_excluding_windows(&[])
+      .build()
+  } else {
+    SCContentFilter::create()
+      .with_display(&display)
+      .with_including_applications(&app_refs, &[])
+      .build()
+  };
   let mut config = SCStreamConfiguration::new();
   let (source_w, source_h) = if let Some(info) = SCShareableContentInfo::for_filter(&filter) {
     let (width, height) = info.pixel_size();
@@ -1248,16 +1253,9 @@ fn choose_resize_filter(
   target_width: u32,
   target_height: u32,
 ) -> image::imageops::FilterType {
-  let scale_x = target_width as f64 / orig_width as f64;
-  let scale_y = target_height as f64 / orig_height as f64;
-  let scale = scale_x.min(scale_y);
-  if scale < 0.5 {
-    image::imageops::FilterType::Triangle
-  } else if scale < 1.0 {
-    image::imageops::FilterType::CatmullRom
-  } else {
-    image::imageops::FilterType::CatmullRom
-  }
+  let _ = (orig_width, orig_height, target_width, target_height);
+  // Match cyberdriver.py's PIL Resampling.LANCZOS as closely as possible.
+  image::imageops::FilterType::Lanczos3
 }
 
 fn filter_label(filter: image::imageops::FilterType) -> &'static str {

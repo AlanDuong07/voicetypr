@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
+import { fetchPermissionSnapshot, getMissingRequiredPermissions } from "@/lib/cyberdriverPermissions";
 
 export interface CyberdriverStatus {
   local_server_running: boolean;
@@ -63,6 +64,16 @@ const defaultSettings: CyberdriverSettings = {
 
 const CyberdriverContext = createContext<CyberdriverContextValue | null>(null);
 
+async function ensurePowerOnPermissions() {
+  const snapshot = await fetchPermissionSnapshot();
+  const missingPermissions = getMissingRequiredPermissions(snapshot);
+  if (missingPermissions.length > 0) {
+    throw new Error(
+      `Grant ${missingPermissions.join(", ")} in Settings before turning on Cyberdriver.`
+    );
+  }
+}
+
 export function CyberdriverProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<CyberdriverStatus | null>(null);
   const [settings, setSettings] = useState<CyberdriverSettings | null>(null);
@@ -89,6 +100,7 @@ export function CyberdriverProvider({ children }: { children: ReactNode }) {
     if (!currentSettings.secret.trim()) {
       throw new Error("Cyberdesk API key is required.");
     }
+    await ensurePowerOnPermissions();
     await invoke("start_local_api");
     await invoke("connect_tunnel");
     await refreshStatus();

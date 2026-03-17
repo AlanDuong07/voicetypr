@@ -544,18 +544,6 @@ async fn is_service_running() -> bool {
     .unwrap_or(false)
 }
 
-pub fn prime_permissions() {
-  use enigo::{Coordinate, Enigo, Mouse};
-
-  let _ = xcap::Monitor::all()
-    .ok()
-    .and_then(|mut monitors| monitors.pop())
-    .and_then(|monitor| monitor.capture_image().ok());
-  let _ = Enigo::new(&enigo::Settings::default())
-    .ok()
-    .and_then(|mut enigo| enigo.move_mouse(0, 0, Coordinate::Rel).ok());
-}
-
 async fn fetch_service_status() -> Option<ServiceStatusResponse> {
   if !cfg!(windows) {
     return None;

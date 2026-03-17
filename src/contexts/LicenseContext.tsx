@@ -141,7 +141,7 @@ export function LicenseProvider({ children }: { children: ReactNode }) {
     } catch (error) {
       console.error('Failed to open purchase page:', error);
       // Fallback to window.open
-      window.open('https://voicetypr.com/#pricing', '_blank');
+      window.open('https://www.cyberdesk.io/', '_blank');
     }
   };
 

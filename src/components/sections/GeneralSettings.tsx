@@ -519,7 +519,7 @@ export function GeneralSettings() {
                     Launch at Startup
                   </Label>
                   <p className="text-xs text-muted-foreground">
-                    Automatically start VoiceTypr when you log in
+                    Automatically start Cyberdriver when you log in
                   </p>
                 </div>
               </div>

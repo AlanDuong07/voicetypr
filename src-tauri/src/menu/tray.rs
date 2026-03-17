@@ -152,7 +152,19 @@ pub async fn build_tray_menu<R: tauri::Runtime>(
         None
     };
 
-    let available_devices = if onboarding_done {
+    let microphone_permission_granted = {
+        #[cfg(target_os = "macos")]
+        {
+            crate::commands::permissions::macos_microphone_is_trusted()
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            true
+        }
+    };
+
+    let available_devices = if onboarding_done && microphone_permission_granted {
         audio::recorder::AudioRecorder::get_devices()
     } else {
         Vec::new()
@@ -295,7 +307,7 @@ pub async fn build_tray_menu<R: tauri::Runtime>(
         None::<&str>,
     )?;
     let separator2 = PredefinedMenuItem::separator(app)?;
-    let quit_i = MenuItem::with_id(app, "quit", "Quit VoiceTypr", true, None::<&str>)?;
+    let quit_i = MenuItem::with_id(app, "quit", "Quit Cyberdriver", true, None::<&str>)?;
 
     let mut menu_builder = MenuBuilder::new(app);
 

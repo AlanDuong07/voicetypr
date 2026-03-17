@@ -894,7 +894,7 @@ pub async fn open_purchase_page() -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         std::process::Command::new("open")
-            .arg("https://voicetypr.com/#pricing")
+            .arg("https://www.cyberdesk.io/")
             .spawn()
             .map_err(|e| format!("Failed to open browser: {}", e))?;
     }
@@ -905,7 +905,7 @@ pub async fn open_purchase_page() -> Result<(), String> {
         const CREATE_NO_WINDOW: u32 = 0x08000000;
 
         std::process::Command::new("cmd")
-            .args(&["/C", "start", "https://voicetypr.com/#pricing"])
+            .args(&["/C", "start", "https://www.cyberdesk.io/"])
             .creation_flags(CREATE_NO_WINDOW)
             .spawn()
             .map_err(|e| format!("Failed to open browser: {}", e))?;
@@ -914,7 +914,7 @@ pub async fn open_purchase_page() -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
         std::process::Command::new("xdg-open")
-            .arg("https://voicetypr.com/#pricing")
+            .arg("https://www.cyberdesk.io/")
             .spawn()
             .map_err(|e| format!("Failed to open browser: {}", e))?;
     }

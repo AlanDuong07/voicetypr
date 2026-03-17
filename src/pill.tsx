@@ -7,7 +7,7 @@ import "./globals.css";
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <SettingsProvider>
-      <div className="w-screen h-screen overflow-hidden bg-transparent">
+      <div className="flex h-screen w-screen items-center justify-center bg-transparent px-4 py-3">
         <RecordingPill />
       </div>
     </SettingsProvider>

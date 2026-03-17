@@ -47,13 +47,13 @@ Var GPUName
         DetailPrint "GPU detected but Vulkan Runtime not found"
         
         MessageBox MB_OK|MB_ICONINFORMATION "GPU Acceleration Available$\n$\n\
-Good news! Your $GPUName can make VoiceTypr 5-10x faster.$\n$\n\
+Good news! Your $GPUName can make Cyberdriver 5-10x faster.$\n$\n\
 To enable GPU acceleration, please update your graphics drivers:$\n$\n\
 • NVIDIA: nvidia.com/drivers$\n\
 • AMD: amd.com/support$\n\
 • Intel: intel.com/content/www/us/en/support$\n$\n\
 Modern graphics drivers include Vulkan Runtime automatically.$\n\
-After updating, VoiceTypr will use your GPU!"
+After updating, Cyberdriver will use your GPU!"
     ${EndIf}
     
     install_complete:
@@ -86,7 +86,7 @@ After updating, VoiceTypr will use your GPU!"
         ${ElseIf} $1 == 1638
             DetailPrint "Visual C++ Runtime already installed (newer or same version)"
         ${Else}
-            MessageBox MB_ICONEXCLAMATION "Visual C++ Runtime installation returned code $1. VoiceTypr may fail to start if runtime is missing."
+            MessageBox MB_ICONEXCLAMATION "Visual C++ Runtime installation returned code $1. Cyberdriver may fail to start if runtime is missing."
         ${EndIf}
 
         Delete "$TEMP\vc_redist.x64.exe"

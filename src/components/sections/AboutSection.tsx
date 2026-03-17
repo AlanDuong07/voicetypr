@@ -4,12 +4,12 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { open } from '@tauri-apps/plugin-shell';
 import { getVersion } from '@tauri-apps/api/app';
 import { 
+  BookOpen,
   ExternalLink,
   Globe,
   Info,
   RefreshCw
 } from "lucide-react";
-import XIcon from "@/components/icons/XIcon";
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { updateService } from '@/services/updateService';
@@ -98,7 +98,7 @@ export function AboutSection() {
             
             <div className="flex gap-3">
               <button
-                onClick={() => openExternalLink("https://voicetypr.com")}
+                onClick={() => openExternalLink("https://www.cyberdesk.io")}
                 className="flex-1 rounded-lg border border-border/50 bg-card p-4 flex items-center justify-between hover:bg-accent/50 transition-colors group"
               >
                 <div className="flex items-center gap-3">
@@ -114,16 +114,16 @@ export function AboutSection() {
               </button>
 
               <button
-                onClick={() => openExternalLink("https://x.com/voicetypr")}
+                onClick={() => openExternalLink("https://docs.cyberdesk.io/cyberdriver/quickstart")}
                 className="flex-1 rounded-lg border border-border/50 bg-card p-4 flex items-center justify-between hover:bg-accent/50 transition-colors group"
               >
                 <div className="flex items-center gap-3">
                   <div className="p-1.5 rounded-md bg-accent">
-                    <XIcon className="h-4 w-4 text-foreground" />
+                    <BookOpen className="h-4 w-4 text-foreground" />
                   </div>
                   <div className="text-left">
-                    <p className="text-sm font-medium">X</p>
-                    <p className="text-xs text-muted-foreground">Follow for updates</p>
+                    <p className="text-sm font-medium">Docs</p>
+                    <p className="text-xs text-muted-foreground">Cyberdriver setup guide</p>
                   </div>
                 </div>
                 <ExternalLink className="h-4 w-4 text-muted-foreground group-hover:text-foreground transition-colors" />

@@ -21,20 +21,41 @@ pub struct KeyEvent {
   pub down: bool,
 }
 
+const XDO_MULTIWORD_KEY_ALIASES: &[(&str, &str)] = &[
+  ("arrow up", "arrow_up"),
+  ("arrow down", "arrow_down"),
+  ("arrow left", "arrow_left"),
+  ("arrow right", "arrow_right"),
+  ("up arrow", "up_arrow"),
+  ("down arrow", "down_arrow"),
+  ("left arrow", "left_arrow"),
+  ("right arrow", "right_arrow"),
+  ("page up", "page_up"),
+  ("page down", "page_down"),
+  ("caps lock", "caps_lock"),
+  ("space bar", "spacebar"),
+  ("back space", "backspace"),
+];
+
 pub fn parse_xdo_sequence(sequence: &str) -> Vec<Vec<KeyEvent>> {
-  let commands = sequence.trim().split_whitespace();
+  let normalized_sequence = normalize_xdo_sequence(sequence);
+  let commands = normalized_sequence.split_whitespace();
   let mut result = Vec::new();
   for command in commands {
     let mut events = Vec::new();
-    let parts = command.split('+').map(|p| p.to_lowercase()).collect::<Vec<_>>();
+    let parts = command
+      .split('+')
+      .map(canonicalize_keyboard_key)
+      .filter(|p| !p.is_empty())
+      .collect::<Vec<_>>();
     let modifiers = parts
       .iter()
-      .filter(|p| matches!(p.as_str(), "ctrl" | "alt" | "shift" | "win" | "cmd" | "super" | "meta"))
+      .filter(|p| is_modifier_key(p))
       .cloned()
       .collect::<Vec<_>>();
     let keys = parts
       .iter()
-      .filter(|p| !matches!(p.as_str(), "ctrl" | "alt" | "shift" | "win" | "cmd" | "super" | "meta"))
+      .filter(|p| !is_modifier_key(p))
       .cloned()
       .collect::<Vec<_>>();
     for m in &modifiers {
@@ -50,6 +71,69 @@ pub fn parse_xdo_sequence(sequence: &str) -> Vec<Vec<KeyEvent>> {
     result.push(events);
   }
   result
+}
+
+fn normalize_xdo_sequence(sequence: &str) -> String {
+  let mut normalized = sequence
+    .trim()
+    .to_lowercase()
+    .split_whitespace()
+    .collect::<Vec<_>>()
+    .join(" ");
+  normalized = normalized.replace(" +", "+").replace("+ ", "+");
+  for (pattern, replacement) in XDO_MULTIWORD_KEY_ALIASES {
+    normalized = normalized.replace(pattern, replacement);
+  }
+  normalized
+}
+
+fn canonicalize_keyboard_key(key: &str) -> String {
+  let raw = key.trim().to_lowercase();
+  if raw.is_empty() {
+    return String::new();
+  }
+
+  let underscored = raw.replace('-', "_").replace(' ', "_");
+  let compact = underscored.replace('_', "");
+
+  match compact.as_str() {
+    "control" | "ctl" => "ctrl".to_string(),
+    "leftcontrol" | "controlleft" | "leftctrl" | "ctrlleft" | "lctrl" => {
+      "lcontrol".to_string()
+    }
+    "rightcontrol" | "controlright" | "rightctrl" | "ctrlright" | "rctrl" => {
+      "rcontrol".to_string()
+    }
+    "alternate" | "option" | "opt" => "alt".to_string(),
+    "leftalt" | "altleft" => "lalt".to_string(),
+    "rightalt" | "altright" => "ralt".to_string(),
+    "leftshift" | "shiftleft" => "lshift".to_string(),
+    "rightshift" | "shiftright" => "rshift".to_string(),
+    "command" | "cmd" | "meta" | "super" | "windows" | "window" => "win".to_string(),
+    "leftcommand" | "commandleft" | "leftcmd" | "cmdleft" | "leftwindows" | "windowsleft"
+    | "leftwin" | "winleft" => "lwin".to_string(),
+    "rightcommand" | "commandright" | "rightcmd" | "cmdright" | "rightwindows"
+    | "windowsright" | "rightwin" | "winright" => "rwin".to_string(),
+    "escape" => "esc".to_string(),
+    "return" => "enter".to_string(),
+    "spacebar" => "space".to_string(),
+    "del" => "delete".to_string(),
+    "ins" => "insert".to_string(),
+    "pageup" | "pgup" => "pageup".to_string(),
+    "pagedown" | "pgdn" | "pgdown" => "pagedown".to_string(),
+    "capslock" => "capslock".to_string(),
+    "arrowup" | "uparrow" => "up".to_string(),
+    "arrowdown" | "downarrow" => "down".to_string(),
+    "arrowleft" | "leftarrow" => "left".to_string(),
+    "arrowright" | "rightarrow" => "right".to_string(),
+    _ => {
+      if raw.len() == 1 {
+        raw
+      } else {
+        compact
+      }
+    }
+  }
 }
 
 pub async fn ensure_capslock_off() -> Result<()> {
@@ -124,7 +208,11 @@ pub async fn execute_xdo_sequence(
     let experimental_space = experimental_space;
     return run_on_main_thread(&app, move || {
       let mut enigo = tauri::async_runtime::block_on(enigo.lock());
-      execute_xdo_sequence_inner(&mut enigo, &sequence, experimental_space)
+      execute_xdo_sequence_inner(
+        &mut enigo,
+        &sequence,
+        experimental_space,
+      )
     })
     .await;
   }
@@ -251,7 +339,7 @@ pub async fn mouse_scroll(
 }
 
 fn normalize_key(key: &str) -> String {
-  key.to_lowercase().replace('_', "")
+  canonicalize_keyboard_key(key)
 }
 
 fn execute_xdo_sequence_inner(
@@ -290,15 +378,18 @@ fn is_modifier_key(key: &str) -> bool {
     key,
     "ctrl"
       | "control"
+      | "lcontrol"
+      | "rcontrol"
       | "shift"
+      | "lshift"
+      | "rshift"
       | "alt"
       | "option"
-      | "cmd"
-      | "command"
+      | "lalt"
+      | "ralt"
       | "win"
-      | "windows"
-      | "super"
-      | "meta"
+      | "lwin"
+      | "rwin"
   )
 }
 
@@ -335,10 +426,10 @@ where
 fn map_key_to_enigo(key: &str) -> Option<Key> {
   let key = normalize_key(key);
   let mapped = match key.as_str() {
-    "ctrl" | "control" => Key::Control,
-    "alt" => Key::Alt,
-    "shift" => Key::Shift,
-    "cmd" | "win" | "super" | "meta" => Key::Meta,
+    "ctrl" | "control" | "lcontrol" | "rcontrol" => Key::Control,
+    "alt" | "lalt" | "ralt" => Key::Alt,
+    "shift" | "lshift" | "rshift" => Key::Shift,
+    "cmd" | "win" | "super" | "meta" | "lwin" | "rwin" => Key::Meta,
     "enter" | "return" => Key::Return,
     "esc" | "escape" => Key::Escape,
     "tab" => Key::Tab,
@@ -374,6 +465,35 @@ fn map_key_to_enigo(key: &str) -> Option<Key> {
     }
   };
   Some(mapped)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn parse_xdo_sequence_normalizes_common_aliases() {
+    let parsed = parse_xdo_sequence("ctrl + arrow right page down");
+    assert_eq!(parsed.len(), 2);
+    assert_eq!(parsed[0][0].key, "ctrl");
+    assert_eq!(parsed[0][1].key, "right");
+    assert_eq!(parsed[1][0].key, "pagedown");
+  }
+
+  #[test]
+  fn parse_xdo_sequence_preserves_side_specific_modifiers() {
+    let parsed = parse_xdo_sequence("right control+a");
+    assert_eq!(parsed.len(), 1);
+    assert_eq!(parsed[0][0].key, "rcontrol");
+    assert_eq!(parsed[0][1].key, "a");
+  }
+
+  #[test]
+  fn scancode_for_key_accepts_side_specific_aliases() {
+    assert_eq!(scancode_for_key("Right-Control"), Some(0xE01D));
+    assert_eq!(scancode_for_key("right alt"), Some(0xE038));
+    assert_eq!(scancode_for_key("RightCommand"), Some(0xE05C));
+  }
 }
 
 fn type_with_scancodes(text: &str, experimental_space: bool) -> bool {

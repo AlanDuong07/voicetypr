@@ -83,8 +83,8 @@ export function getPermissionDescription(permission: keyof PermissionStatus): st
  */
 export function getPermissionInstructions(permission: keyof PermissionStatus): string {
   const instructions = {
-    microphone: 'Go to System Settings → Privacy & Security → Microphone and enable VoiceTypr',
-    accessibility: 'Go to System Settings → Privacy & Security → Accessibility and enable VoiceTypr',
+    microphone: 'Go to System Settings → Privacy & Security → Microphone and enable Cyberdriver',
+    accessibility: 'Go to System Settings → Privacy & Security → Accessibility and enable Cyberdriver',
   };
   
   return instructions[permission] || 'Check System Settings → Privacy & Security';

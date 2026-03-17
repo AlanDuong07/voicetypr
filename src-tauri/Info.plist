@@ -3,10 +3,10 @@
 <plist version="1.0">
 <dict>
     <key>NSMicrophoneUsageDescription</key>
-    <string>VoiceType needs access to your microphone to transcribe speech to text.</string>
+    <string>Cyberdriver uses your microphone for dictation and computer-use voice commands.</string>
     <key>NSSpeechRecognitionUsageDescription</key>
-    <string>VoiceType uses speech recognition to convert your voice to text.</string>
+    <string>Cyberdriver converts your speech into text and computer-use tasks.</string>
     <key>NSAppleEventsUsageDescription</key>
-    <string>VoiceType needs accessibility permissions to insert transcribed text at your cursor position.</string>
+    <string>Cyberdriver uses Automation to paste dictated text into other apps when auto-paste is enabled.</string>
 </dict>
 </plist>

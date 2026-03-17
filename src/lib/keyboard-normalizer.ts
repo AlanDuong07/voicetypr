@@ -195,18 +195,29 @@ export function isSingleModifierKey(key: string): boolean {
 export function formatKeyForDisplay(key: string, isMac: boolean = false): string {
 
   const displayMap: Record<string, string> = {
+    'LeftCommand': isMac ? 'Left ⌘' : 'Left Ctrl',
+    'RightCommand': isMac ? 'Right ⌘' : 'Right Ctrl',
+    'LeftMeta': isMac ? 'Left ⌘' : 'Left Win',
+    'RightMeta': isMac ? 'Right ⌘' : 'Right Win',
     'CommandOrControl': isMac ? '⌘' : 'Ctrl',
     'Super': isMac ? '⌘' : 'Win',  // Super is Command on Mac, Windows key on PC
     'Cmd': isMac ? '⌘' : 'Ctrl',
+    'LeftControl': isMac ? 'Left ⌃' : 'Left Ctrl',
+    'RightControl': isMac ? 'Right ⌃' : 'Right Ctrl',
     'Ctrl': isMac ? '⌃' : 'Ctrl',  // Use proper Control symbol on Mac
     'Control': isMac ? '⌃' : 'Ctrl',
     'Command': isMac ? '⌘' : 'Ctrl',
+    'LeftShift': isMac ? 'Left ⇧' : 'Left Shift',
+    'RightShift': isMac ? 'Right ⇧' : 'Right Shift',
     'Shift': isMac ? '⇧' : 'Shift',
+    'LeftAlt': isMac ? 'Left ⌥' : 'Left Alt',
+    'RightAlt': isMac ? 'Right ⌥' : 'Right Alt',
+    'LeftOption': isMac ? 'Left ⌥' : 'Left Alt',
+    'RightOption': isMac ? 'Right ⌥' : 'Right Alt',
     'Alt': isMac ? '⌥' : 'Alt',
-    'LeftAlt': isMac ? '⌥' : 'Alt',
-    'RightAlt': isMac ? '⌥' : 'Alt',
     'Option': isMac ? '⌥' : 'Alt',
     'Meta': isMac ? '⌘' : 'Ctrl',
+    'Fn': 'Fn',
     'Enter': isMac ? '⏎' : 'Enter',
     'Return': isMac ? '⏎' : 'Enter',
     'Tab': isMac ? '⇥' : 'Tab',

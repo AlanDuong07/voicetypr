@@ -6,7 +6,7 @@ use std::thread;
 use std::time::Duration;
 
 use super::level_meter::AudioLevelMeter;
-use super::silence_detector::SilenceDetector;
+use super::silence_detector::{SilenceDetector, SilenceState};
 
 // Type-safe recording size limits
 pub struct RecordingSize;
@@ -29,6 +29,7 @@ impl RecordingSize {
 pub struct AudioRecorder {
     recording_handle: Arc<Mutex<Option<RecordingHandle>>>,
     audio_level_receiver: Arc<Mutex<Option<mpsc::Receiver<f64>>>>,
+    inactivity_event_receiver: Arc<Mutex<Option<mpsc::Receiver<RecorderInactivityEvent>>>>,
 }
 
 impl Drop for AudioRecorder {
@@ -52,6 +53,12 @@ impl Drop for AudioRecorder {
         } else {
             log::error!("Failed to acquire audio level receiver lock during drop");
         }
+
+        if let Ok(mut receiver_guard) = self.inactivity_event_receiver.lock() {
+            receiver_guard.take();
+        } else {
+            log::error!("Failed to acquire inactivity event receiver lock during drop");
+        }
     }
 }
 
@@ -63,7 +70,14 @@ struct RecordingHandle {
 #[derive(Debug)]
 enum RecorderCommand {
     Stop,
-    StopSilence,
+    StopInactivityTimeout,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum RecorderInactivityEvent {
+    Countdown(u64),
+    Clear,
+    TimeoutExceeded,
 }
 
 impl AudioRecorder {
@@ -71,6 +85,7 @@ impl AudioRecorder {
         Self {
             recording_handle: Arc::new(Mutex::new(None)),
             audio_level_receiver: Arc::new(Mutex::new(None)),
+            inactivity_event_receiver: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -106,9 +121,14 @@ impl AudioRecorder {
 
         // Create audio level channel (f64 for EBU R128 loudness values)
         let (audio_level_tx, audio_level_rx) = mpsc::channel::<f64>();
+        let (inactivity_event_tx, inactivity_event_rx) =
+            mpsc::channel::<RecorderInactivityEvent>();
 
-        // Silence detection config for VAD
-        let silence_duration = Duration::from_secs(10); // 10 seconds of continuous silence
+        // Silence detection config for VAD.
+        // The user wants the full inactivity timeout to apply from recording
+        // start, not only after speech has already begun.
+        let initial_silence_duration = Duration::from_secs(60);
+        let post_speech_silence_duration = Duration::from_secs(60);
 
         // Spawn recording thread
         let thread_handle = thread::spawn(move || -> Result<String, String> {
@@ -161,7 +181,10 @@ impl AudioRecorder {
             }
 
             // Initialize silence detector and level meter
-            let silence_detector = Arc::new(Mutex::new(SilenceDetector::new(silence_duration)));
+            let silence_detector = Arc::new(Mutex::new(SilenceDetector::new(
+                initial_silence_duration,
+                post_speech_silence_duration,
+            )));
 
             let level_meter = Arc::new(Mutex::new(
                 AudioLevelMeter::new(
@@ -217,6 +240,7 @@ impl AudioRecorder {
                 let stop_tx_for_silence = stop_tx_clone.clone();
                 let silence_detector_clone = silence_detector.clone();
                 let level_meter_clone = level_meter.clone();
+                let inactivity_event_tx_clone = inactivity_event_tx.clone();
 
                 move |f32_samples: &[f32], i16_samples: &[i16]| {
                     // Calculate RMS for both level meter and silence detection
@@ -230,9 +254,30 @@ impl AudioRecorder {
 
                     // Check for silence
                     if let Ok(mut detector) = silence_detector_clone.try_lock() {
-                        if detector.update(rms) {
-                            // Silence duration exceeded, stop recording
-                            let _ = stop_tx_for_silence.send(RecorderCommand::StopSilence);
+                        match detector.update(rms) {
+                            SilenceState::None => {}
+                            SilenceState::ClearWarning => {
+                                let _ =
+                                    inactivity_event_tx_clone.send(RecorderInactivityEvent::Clear);
+                            }
+                            SilenceState::Warning(seconds_remaining) => {
+                                let _ = inactivity_event_tx_clone
+                                    .send(RecorderInactivityEvent::Countdown(
+                                        seconds_remaining,
+                                    ));
+                            }
+                            SilenceState::InitialTimeout => {
+                                let _ = inactivity_event_tx_clone
+                                    .send(RecorderInactivityEvent::TimeoutExceeded);
+                                let _ = stop_tx_for_silence
+                                    .send(RecorderCommand::StopInactivityTimeout);
+                            }
+                            SilenceState::PostSpeechTimeout => {
+                                let _ = inactivity_event_tx_clone
+                                    .send(RecorderInactivityEvent::TimeoutExceeded);
+                                let _ = stop_tx_for_silence
+                                    .send(RecorderCommand::StopInactivityTimeout);
+                            }
                         }
                     }
 
@@ -390,8 +435,8 @@ impl AudioRecorder {
 
             // Return appropriate message based on stop reason
             match stop_reason {
-                Some(RecorderCommand::StopSilence) => {
-                    Ok("Recording stopped due to silence".to_string())
+                Some(RecorderCommand::StopInactivityTimeout) => {
+                    Ok("Recording stopped due to inactivity timeout".to_string())
                 }
                 Some(RecorderCommand::Stop) => Ok("Recording stopped by user".to_string()),
                 None => Ok("Recording stopped".to_string()),
@@ -409,6 +454,10 @@ impl AudioRecorder {
             .audio_level_receiver
             .lock()
             .map_err(|e| format!("Failed to acquire lock: {}", e))? = Some(audio_level_rx);
+        *self
+            .inactivity_event_receiver
+            .lock()
+            .map_err(|e| format!("Failed to acquire lock: {}", e))? = Some(inactivity_event_rx);
 
         Ok(())
     }
@@ -422,6 +471,9 @@ impl AudioRecorder {
 
         // Also clear the audio level receiver
         if let Ok(mut guard) = self.audio_level_receiver.lock() {
+            guard.take();
+        }
+        if let Ok(mut guard) = self.inactivity_event_receiver.lock() {
             guard.take();
         }
 
@@ -465,6 +517,26 @@ impl AudioRecorder {
             .lock()
             .ok()
             .and_then(|mut guard| guard.take())
+    }
+
+    pub fn take_inactivity_event_receiver(
+        &mut self,
+    ) -> Option<mpsc::Receiver<RecorderInactivityEvent>> {
+        self.inactivity_event_receiver
+            .lock()
+            .ok()
+            .and_then(|mut guard| guard.take())
+    }
+
+    pub fn has_finished_recording(&self) -> bool {
+        self.recording_handle
+            .lock()
+            .map(|guard| {
+                guard.as_ref()
+                    .map(|handle| handle.thread_handle.is_finished())
+                    .unwrap_or(false)
+            })
+            .unwrap_or(false)
     }
 
     pub fn get_devices() -> Vec<String> {

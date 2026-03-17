@@ -1,7 +1,15 @@
 import { motion } from "framer-motion";
 import { useEffect, useRef, useState } from "react";
 
-type DotState = "idle" | "listening" | "transcribing" | "formatting" | "task_running" | "task_success";
+type DotState =
+  | "idle"
+  | "listening"
+  | "transcribing"
+  | "formatting"
+  | "timeout_warning"
+  | "timeout_exceeded"
+  | "task_running"
+  | "task_success";
 
 interface AudioDotsProps {
   state: DotState;
@@ -113,9 +121,28 @@ export function AudioDots({ state, audioLevel = 0 }: AudioDotsProps) {
 
   // Check if we should show pulsing animation (transcribing or formatting)
   const shouldPulse =
-    state === "transcribing" || state === "formatting" || state === "task_running";
+    state === "transcribing" ||
+    state === "formatting" ||
+    state === "task_running" ||
+    state === "timeout_warning";
   // Formatting pulses faster than transcribing
-  const pulseDuration = state === "formatting" ? 0.8 : state === "task_running" ? 0.7 : 1.2;
+  const pulseDuration =
+    state === "formatting"
+      ? 0.8
+      : state === "task_running"
+      ? 0.7
+      : state === "timeout_warning"
+      ? 0.9
+      : 1.2;
+
+  const dotColor =
+    state === "task_success"
+      ? "#22c55e"
+      : state === "timeout_warning"
+      ? "#f59e0b"
+      : state === "timeout_exceeded"
+      ? "#fb7185"
+      : "#ffffff";
 
   return (
     <motion.div
@@ -139,7 +166,7 @@ export function AudioDots({ state, audioLevel = 0 }: AudioDotsProps) {
             height: state === "listening" ? dotSize * heights[i] : dotSize,
             // Pulsing opacity for transcribing and formatting states
             opacity: shouldPulse ? [0.95, 0.4, 0.95] : 0.95,
-            backgroundColor: state === "task_success" ? "#22c55e" : "#ffffff",
+            backgroundColor: dotColor,
           }}
           transition={{
             width: { duration: 0.25, ease: "easeOut" },

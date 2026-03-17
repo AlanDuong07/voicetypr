@@ -146,7 +146,6 @@ pub async fn auto_select_model_if_needed(
         "current_model_engine",
         serde_json::Value::String(engine.clone()),
     );
-    store.set("onboarding_completed", serde_json::Value::Bool(true));
     store.save().map_err(|e| e.to_string())?;
 
     log::info!(

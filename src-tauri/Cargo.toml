@@ -16,7 +16,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 doctest = false
 
 [features]
-default = []
+default = ["screencapturekit"]
 screencapturekit = ["dep:screencapturekit"]
 
 [build-dependencies]
@@ -80,7 +80,11 @@ tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2"
 tauri-plugin-macos-permissions = "2"
 core-graphics = "0.24"
 media-remote = "0.3"
+objc2-avf-audio = { version = "0.3.1", features = ["AVAudioApplication", "block2"] }
 screencapturekit = { version = "1", features = ["macos_14_0"], optional = true }
+block2 = "0.6.2"
+objc2 = "0.6.4"
+core-foundation = "0.10.1"
 
 [target.'cfg(all(target_os = "windows", target_arch = "x86_64"))'.dependencies]
 whisper-rs = { version = "0.15.1", features = ["vulkan"] }

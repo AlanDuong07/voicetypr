@@ -21,6 +21,7 @@ mod tests {
     fn test_settings_serialization() {
         let settings = Settings {
             hotkey: "CommandOrControl+A".to_string(),
+            computer_use_hotkey: "Option+Space".to_string(),
             current_model: "base".to_string(),
             current_model_engine: "whisper".to_string(),
             language: "es".to_string(),
@@ -84,6 +85,7 @@ mod tests {
     fn test_settings_clone() {
         let settings = Settings {
             hotkey: "CommandOrControl+B".to_string(),
+            computer_use_hotkey: "Option+Space".to_string(),
             current_model: "tiny".to_string(),
             current_model_engine: "whisper".to_string(),
             language: "fr".to_string(),

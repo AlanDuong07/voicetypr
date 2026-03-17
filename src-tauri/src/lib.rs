@@ -70,7 +70,9 @@ use commands::{
     },
     permissions::{
         check_accessibility_permission, check_microphone_permission,
-        request_accessibility_permission, request_microphone_permission,
+        check_screen_capture_permission, get_permission_snapshot,
+        request_accessibility_permission, request_automation_permission,
+        request_microphone_permission, request_screen_capture_permission,
         test_automation_permission,
     },
     reset::reset_app_data,
@@ -81,7 +83,7 @@ use commands::{
     window::*,
 };
 use whisper::cache::TranscriberCache;
-use window_manager::WindowManager;
+use window_manager::{WindowManager, PILL_WINDOW_HEIGHT, PILL_WINDOW_WIDTH};
 
 use menu::build_tray_menu;
 pub use recognition::{
@@ -108,7 +110,7 @@ fn setup_logging() -> tauri_plugin_log::Builder {
                     && !target.contains("hound")
             }),
             Target::new(TargetKind::LogDir {
-                file_name: Some(format!("voicetypr-{}", today)),
+                file_name: Some(format!("cyberdriver-{}", today)),
             })
             .filter(|metadata| {
                 // Filter out noisy logs from file as well
@@ -371,7 +373,6 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             match cyberdriver::CyberdriverRuntime::new(app.app_handle().clone()) {
                 Ok(runtime) => {
                     app.manage(tokio::sync::Mutex::new(runtime));
-                    cyberdriver::prime_permissions();
                     log::info!("🤖 Cyberdriver runtime initialized");
                 }
                 Err(e) => {
@@ -716,89 +717,134 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 log::info!("Recording mode set to: {:?}", recording_mode);
             }
 
-            // Normalize the hotkey for Tauri
-            let normalized_hotkey = crate::commands::key_normalizer::normalize_shortcut_keys(&hotkey_str);
+            #[cfg(target_os = "macos")]
+            let use_custom_recording_hotkey =
+                recording::macos_hotkey_requires_custom_listener(&hotkey_str);
+            #[cfg(not(target_os = "macos"))]
+            let use_custom_recording_hotkey = false;
 
-            // Register global shortcut from settings with fallback
-            let shortcut: tauri_plugin_global_shortcut::Shortcut = match normalized_hotkey.parse() {
-                Ok(s) => s,
-                Err(_) => {
-                    log::warn!("Invalid hotkey format '{}', using default", normalized_hotkey);
-                    match "CommandOrControl+Shift+Space".parse() {
-                        Ok(default_shortcut) => default_shortcut,
-                        Err(e) => {
-                            log::error!("Even default shortcut failed to parse: {}", e);
-                            // Emit event to notify frontend that hotkey registration failed
-                            if let Some(window) = app.get_webview_window("main") {
-                                let _ = window.emit("hotkey-registration-failed", ());
+            if use_custom_recording_hotkey {
+                #[cfg(target_os = "macos")]
+                {
+                    if let Ok(mut shortcut_guard) = app_state.recording_shortcut.lock() {
+                        *shortcut_guard = None;
+                    }
+
+                    if let Err(e) = recording::configure_macos_recording_hotkey(&hotkey_str) {
+                        log::error!(
+                            "❌ Failed to configure macOS custom recording hotkey '{}': {}",
+                            hotkey_str,
+                            e
+                        );
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.emit("hotkey-registration-failed", serde_json::json!({
+                                "hotkey": hotkey_str,
+                                "error": e,
+                                "suggestion": "Please choose a different hotkey in settings."
+                            }));
+                        }
+                    } else if recording::macos_input_monitoring_granted() {
+                        recording::init_macos_global_hotkey_listener(app.app_handle().clone());
+                        log::info!(
+                            "✅ Configured macOS custom recording hotkey: {}",
+                            hotkey_str
+                        );
+                    } else {
+                        log::warn!(
+                            "macOS custom recording hotkey '{}' needs Input Monitoring permission",
+                            hotkey_str
+                        );
+                    }
+                }
+            } else {
+                #[cfg(target_os = "macos")]
+                let _ = recording::configure_macos_recording_hotkey("");
+
+                // Normalize the hotkey for Tauri
+                let normalized_hotkey =
+                    crate::commands::key_normalizer::normalize_shortcut_keys(&hotkey_str);
+
+                // Register global shortcut from settings with fallback
+                let shortcut: tauri_plugin_global_shortcut::Shortcut = match normalized_hotkey.parse()
+                {
+                    Ok(s) => s,
+                    Err(_) => {
+                        log::warn!("Invalid hotkey format '{}', using default", normalized_hotkey);
+                        match "CommandOrControl+Shift+Space".parse() {
+                            Ok(default_shortcut) => default_shortcut,
+                            Err(e) => {
+                                log::error!("Even default shortcut failed to parse: {}", e);
+                                if let Some(window) = app.get_webview_window("main") {
+                                    let _ = window.emit("hotkey-registration-failed", ());
+                                }
+                                return Ok(());
                             }
-                            // Return a minimal working shortcut or continue without hotkey
-                            return Ok(());
                         }
                     }
+                };
+
+                if let Ok(mut shortcut_guard) = app_state.recording_shortcut.lock() {
+                    *shortcut_guard = Some(shortcut);
                 }
-            };
 
-            // Store the recording shortcut in managed state
-            let app_state = app.state::<AppState>();
-            if let Ok(mut shortcut_guard) = app_state.recording_shortcut.lock() {
-                *shortcut_guard = Some(shortcut);
-            }
+                let registration_start = Instant::now();
+                let registration_result =
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        app.global_shortcut().register(shortcut)
+                    }));
 
-            // Try to register global shortcut with panic protection
-            let registration_start = Instant::now();
-            let registration_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                app.global_shortcut().register(shortcut)
-            }));
-
-            match registration_result {
-                Ok(Ok(_)) => {
-                    log_complete("HOTKEY_REGISTRATION", registration_start.elapsed().as_millis() as u64);
-                    log_with_context(log::Level::Debug, "Hotkey registered", &[
-                        ("hotkey", &hotkey_str),
-                        ("normalized", &normalized_hotkey)
-                    ]);
-                    log::info!("✅ Successfully registered global hotkey: {}", hotkey_str);
-                }
-                Ok(Err(e)) => {
-                    log_failed("HOTKEY_REGISTRATION", &e.to_string());
-                    log_with_context(log::Level::Debug, "Hotkey registration failed", &[
-                        ("hotkey", &hotkey_str),
-                        ("normalized", &normalized_hotkey),
-                        ("suggestion", "Try different hotkey or close conflicting apps")
-                    ]);
-
-                    log::error!("❌ Failed to register global hotkey '{}': {}", hotkey_str, e);
-                    log::warn!("⚠️  The app will continue without global hotkey support. Another application may be using this shortcut.");
-
-                    // Emit event to notify frontend that hotkey registration failed
-                    if let Some(window) = app.get_webview_window("main") {
-                        let _ = window.emit("hotkey-registration-failed", serde_json::json!({
-                            "hotkey": hotkey_str,
-                            "error": e.to_string(),
-                            "suggestion": "Please choose a different hotkey in settings or close conflicting applications"
-                        }));
+                match registration_result {
+                    Ok(Ok(_)) => {
+                        log_complete(
+                            "HOTKEY_REGISTRATION",
+                            registration_start.elapsed().as_millis() as u64,
+                        );
+                        log_with_context(log::Level::Debug, "Hotkey registered", &[
+                            ("hotkey", &hotkey_str),
+                            ("normalized", &normalized_hotkey),
+                        ]);
+                        log::info!("✅ Successfully registered global hotkey: {}", hotkey_str);
                     }
-                }
-                Err(panic_err) => {
-                    let panic_msg = if let Some(s) = panic_err.downcast_ref::<&str>() {
-                        s.to_string()
-                    } else if let Some(s) = panic_err.downcast_ref::<String>() {
-                        s.clone()
-                    } else {
-                        "Unknown panic during hotkey registration".to_string()
-                    };
+                    Ok(Err(e)) => {
+                        log_failed("HOTKEY_REGISTRATION", &e.to_string());
+                        log_with_context(log::Level::Debug, "Hotkey registration failed", &[
+                            ("hotkey", &hotkey_str),
+                            ("normalized", &normalized_hotkey),
+                            ("suggestion", "Try different hotkey or close conflicting apps"),
+                        ]);
 
-                    log::error!("💥 PANIC during hotkey registration: {}", panic_msg);
-                    log::warn!("⚠️  Continuing without global hotkey due to panic");
+                        log::error!("❌ Failed to register global hotkey '{}': {}", hotkey_str, e);
+                        log::warn!(
+                            "⚠️  The app will continue without global hotkey support. Another application may be using this shortcut."
+                        );
 
-                    // Emit event to notify frontend
-                    if let Some(window) = app.get_webview_window("main") {
-                        let _ = window.emit("hotkey-registration-failed", serde_json::json!({
-                            "hotkey": hotkey_str,
-                            "error": format!("Critical error: {}", panic_msg),
-                            "suggestion": "The hotkey system encountered an error. Please restart the app or try a different hotkey."
-                        }));
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.emit("hotkey-registration-failed", serde_json::json!({
+                                "hotkey": hotkey_str,
+                                "error": e.to_string(),
+                                "suggestion": "Please choose a different hotkey in settings or close conflicting applications"
+                            }));
+                        }
+                    }
+                    Err(panic_err) => {
+                        let panic_msg = if let Some(s) = panic_err.downcast_ref::<&str>() {
+                            s.to_string()
+                        } else if let Some(s) = panic_err.downcast_ref::<String>() {
+                            s.clone()
+                        } else {
+                            "Unknown panic during hotkey registration".to_string()
+                        };
+
+                        log::error!("💥 PANIC during hotkey registration: {}", panic_msg);
+                        log::warn!("⚠️  Continuing without global hotkey due to panic");
+
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.emit("hotkey-registration-failed", serde_json::json!({
+                                "hotkey": hotkey_str,
+                                "error": format!("Critical error: {}", panic_msg),
+                                "suggestion": "The hotkey system encountered an error. Please restart the app or try a different hotkey."
+                            }));
+                        }
                     }
                 }
             }
@@ -845,34 +891,94 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                     .and_then(|v| v.as_str().map(|s| s.to_string()))
                     .filter(|s| !s.trim().is_empty())
                 {
-                    let normalized = crate::commands::key_normalizer::normalize_shortcut_keys(&computer_use_hotkey);
-                    match normalized.parse::<tauri_plugin_global_shortcut::Shortcut>() {
-                        Ok(shortcut) => {
-                            if let Ok(mut guard) = app_state.computer_use_shortcut.lock() {
-                                *guard = Some(shortcut);
-                            }
-                            if let Err(e) = app.global_shortcut().register(shortcut) {
+                    #[cfg(target_os = "macos")]
+                    {
+                        let use_custom = recording::macos_hotkey_requires_custom_listener(&computer_use_hotkey);
+                        if use_custom {
+                            if let Err(e) = recording::configure_macos_computer_use_hotkey(&computer_use_hotkey) {
                                 log::warn!(
-                                    "Failed to register computer use hotkey '{}': {}",
+                                    "Failed to configure macOS computer use hotkey '{}': {}",
                                     computer_use_hotkey,
                                     e
                                 );
-                                if let Ok(mut guard) = app_state.computer_use_shortcut.lock() {
-                                    *guard = None;
-                                }
-                            } else {
+                            } else if recording::macos_input_monitoring_granted() {
+                                recording::init_macos_global_hotkey_listener(app.app_handle().clone());
                                 log::info!(
-                                    "✅ Successfully registered computer use hotkey: {}",
+                                    "✅ Configured macOS custom computer use hotkey: {}",
+                                    computer_use_hotkey
+                                );
+                            } else {
+                                log::warn!(
+                                    "macOS custom computer use hotkey '{}' needs Input Monitoring permission",
                                     computer_use_hotkey
                                 );
                             }
+                        } else {
+                            let _ = recording::configure_macos_computer_use_hotkey("");
+                            let normalized = crate::commands::key_normalizer::normalize_shortcut_keys(&computer_use_hotkey);
+                            match normalized.parse::<tauri_plugin_global_shortcut::Shortcut>() {
+                                Ok(shortcut) => {
+                                    if let Ok(mut guard) = app_state.computer_use_shortcut.lock() {
+                                        *guard = Some(shortcut);
+                                    }
+                                    if let Err(e) = app.global_shortcut().register(shortcut) {
+                                        log::warn!(
+                                            "Failed to register computer use hotkey '{}': {}",
+                                            computer_use_hotkey,
+                                            e
+                                        );
+                                        if let Ok(mut guard) = app_state.computer_use_shortcut.lock() {
+                                            *guard = None;
+                                        }
+                                    } else {
+                                        log::info!(
+                                            "✅ Successfully registered computer use hotkey: {}",
+                                            computer_use_hotkey
+                                        );
+                                    }
+                                }
+                                Err(e) => {
+                                    log::warn!(
+                                        "Invalid computer use hotkey '{}': {}",
+                                        computer_use_hotkey,
+                                        e
+                                    );
+                                }
+                            }
                         }
-                        Err(e) => {
-                            log::warn!(
-                                "Invalid computer use hotkey '{}': {}",
-                                computer_use_hotkey,
-                                e
-                            );
+                    }
+
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        let normalized = crate::commands::key_normalizer::normalize_shortcut_keys(&computer_use_hotkey);
+                        match normalized.parse::<tauri_plugin_global_shortcut::Shortcut>() {
+                            Ok(shortcut) => {
+                                if let Ok(mut guard) = app_state.computer_use_shortcut.lock() {
+                                    *guard = Some(shortcut);
+                                }
+                                if let Err(e) = app.global_shortcut().register(shortcut) {
+                                    log::warn!(
+                                        "Failed to register computer use hotkey '{}': {}",
+                                        computer_use_hotkey,
+                                        e
+                                    );
+                                    if let Ok(mut guard) = app_state.computer_use_shortcut.lock() {
+                                        *guard = None;
+                                    }
+                                } else {
+                                    log::info!(
+                                        "✅ Successfully registered computer use hotkey: {}",
+                                        computer_use_hotkey
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                log::warn!(
+                                    "Invalid computer use hotkey '{}': {}",
+                                    computer_use_hotkey,
+                                    e
+                                );
+                            }
                         }
                     }
                 }
@@ -934,8 +1040,8 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                         (1440.0, 900.0) // Fallback
                     };
 
-                    let pill_width = 80.0;  // Sized for 3-dot pill (active state with padding)
-                    let pill_height = 40.0;
+                    let pill_width = PILL_WINDOW_WIDTH;
+                    let pill_height = PILL_WINDOW_HEIGHT;
                     let bottom_offset = 10.0;  // Distance from bottom of screen
 
                     let x = (screen_width - pill_width) / 2.0;
@@ -948,7 +1054,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 {
                     // Create the pill window - sized for 3 dots
                     // Properties aligned with window_manager.rs for consistency
-                    let pill_builder = WebviewWindowBuilder::new(app, "pill", WebviewUrl::App("pill".into()))
+                    let pill_builder = WebviewWindowBuilder::new(app, "pill", WebviewUrl::App("pill.html".into()))
                         .title("Recording")
                         .resizable(false)
                         .maximizable(false)
@@ -960,7 +1066,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                         .skip_taskbar(true)
                         .transparent(true)
                         .shadow(false)  // Prevent window shadow on macOS
-                        .inner_size(80.0, 40.0)  // Sized for 3-dot pill (active state with padding)
+                        .inner_size(PILL_WINDOW_WIDTH, PILL_WINDOW_HEIGHT)
                         .position(pos_x, pos_y)
                         .visible(true)  // Always visible (controlled by show_pill_indicator setting)
                         .focused(false);  // Don't steal focus
@@ -991,7 +1097,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 // Create toast window for feedback messages (positioned above pill) - all platforms
                 let toast_width = 400.0;
                 let toast_height = 80.0;
-                let pill_width = 80.0;
+                let pill_width = PILL_WINDOW_WIDTH;
                 let gap = 8.0; // Gap between pill and toast
 
                 // Center toast above pill
@@ -999,7 +1105,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 let toast_y = pos_y - toast_height - gap;
                 log::info!("Toast window position: ({}, {}) - above pill at ({}, {})", toast_x, toast_y, pos_x, pos_y);
 
-                let toast_builder = WebviewWindowBuilder::new(app, "toast", WebviewUrl::App("toast".into()))
+                let toast_builder = WebviewWindowBuilder::new(app, "toast", WebviewUrl::App("toast.html".into()))
                     .title("Feedback")
                     .resizable(false)
                     .decorations(false)
@@ -1060,31 +1166,13 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
-            // Hide main window on start (menu bar only)
-            // Check if this is first launch by looking for current_model setting
-            let should_hide_main = if let Ok(store) = app.store("settings") {
-                // If user has a model configured, they've completed onboarding
-                store.get("current_model")
-                    .and_then(|v| v.as_str().map(|s| !s.is_empty()))
-                    .unwrap_or(false)
-            } else {
-                false
-            };
-
-            if should_hide_main {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.hide();
-                    log::info!("Main window hidden - menubar mode active");
-                }
-                // Keep dock icon hidden when main window is hidden
-                #[cfg(target_os = "macos")]
-                hide_dock_icon(app.app_handle());
-            } else {
-                log::info!("👋 First launch or no model configured - keeping main window visible");
-                // Show dock icon when main window is visible
-                #[cfg(target_os = "macos")]
-                show_dock_icon(app.app_handle());
+            // Always show the main UI when the app is launched.
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
             }
+            #[cfg(target_os = "macos")]
+            show_dock_icon(app.app_handle());
 
             // Log setup completion
             log_performance("APP_SETUP_COMPLETE", setup_start.elapsed().as_millis() as u64, None);
@@ -1130,10 +1218,14 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             close_pill_widget,
             hide_toast_window,
             focus_main_window,
+            get_permission_snapshot,
             check_accessibility_permission,
             request_accessibility_permission,
             check_microphone_permission,
             request_microphone_permission,
+            check_screen_capture_permission,
+            request_screen_capture_permission,
+            request_automation_permission,
             test_automation_permission,
             check_license_status,
             restore_license,

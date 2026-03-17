@@ -11,6 +11,8 @@ type PillState =
   | "listening"
   | "transcribing"
   | "formatting"
+  | "timeout_warning"
+  | "timeout_exceeded"
   | "task_running"
   | "task_success";
 
@@ -19,12 +21,16 @@ export function RecordingPill() {
   const [audioLevel, setAudioLevel] = useState(0);
   const [isFormatting, setIsFormatting] = useState(false);
   const [taskState, setTaskState] = useState<"idle" | "running" | "success">("idle");
+  const [timeoutWarningSeconds, setTimeoutWarningSeconds] = useState<number | null>(null);
+  const [timeoutExceeded, setTimeoutExceeded] = useState(false);
 
   // Setting: pill indicator mode (default: "when_recording")
   const pillIndicatorMode: PillIndicatorMode = useSetting("pill_indicator_mode") ?? "when_recording";
 
   // Determine pill state
   const getPillState = (): PillState => {
+    if (timeoutExceeded) return "timeout_exceeded";
+    if (timeoutWarningSeconds !== null) return "timeout_warning";
     if (taskState === "success") return "task_success";
     if (taskState === "running") return "task_running";
     if (isFormatting) return "formatting";
@@ -65,6 +71,17 @@ export function RecordingPill() {
     }
   }, [isListening]);
 
+  useEffect(() => {
+    if (recording.state !== "recording") {
+      setTimeoutWarningSeconds(null);
+    }
+
+    if (recording.state === "starting" || recording.state === "idle") {
+      setTimeoutWarningSeconds(null);
+      setTimeoutExceeded(false);
+    }
+  }, [recording.state]);
+
   // Listen for formatting/enhancement events (global events from backend)
   useEffect(() => {
     let isMounted = true;
@@ -80,6 +97,33 @@ export function RecordingPill() {
       { name: "enhancing-failed", handler: () => {
         if (isMounted) setIsFormatting(false);
       }},
+      {
+        name: "inactivity-timeout-warning",
+        handler: (event: { payload: { seconds_remaining?: number } }) => {
+          if (!isMounted) return;
+          const secondsRemaining = event.payload?.seconds_remaining;
+          if (typeof secondsRemaining === "number") {
+            setTimeoutExceeded(false);
+            setTimeoutWarningSeconds(secondsRemaining);
+          }
+        }
+      },
+      {
+        name: "inactivity-timeout-cleared",
+        handler: () => {
+          if (!isMounted) return;
+          setTimeoutWarningSeconds(null);
+          setTimeoutExceeded(false);
+        }
+      },
+      {
+        name: "inactivity-timeout-exceeded",
+        handler: () => {
+          if (!isMounted) return;
+          setTimeoutWarningSeconds(null);
+          setTimeoutExceeded(true);
+        }
+      },
       {
         name: "computer-task-started",
         handler: () => {
@@ -139,6 +183,10 @@ export function RecordingPill() {
       ? "Running task"
       : pillState === "task_success"
       ? "Task complete"
+      : pillState === "timeout_exceeded"
+      ? "Timeout exceeded"
+      : pillState === "timeout_warning"
+      ? `Inactivity timeout in ${timeoutWarningSeconds}`
       : pillState === "formatting"
       ? "Enhancing"
       : pillState === "transcribing"
@@ -148,25 +196,26 @@ export function RecordingPill() {
       : "";
 
   return (
-    <div className="fixed inset-0 flex items-center justify-center">
-      {/* Solid black pill - grows when active */}
-      <motion.div
-        className="flex items-center gap-3 justify-center rounded-full select-none bg-black shadow-lg ring-1 ring-white/30"
-        animate={{
-          // ~1.4x growth from idle to active
-          paddingLeft: isActive ? 14 : 10,
-          paddingRight: isActive ? 14 : 10,
-          paddingTop: isActive ? 7 : 5,
-          paddingBottom: isActive ? 7 : 5,
-        }}
-        transition={{
-          duration: 0.25,
-          ease: "easeOut",
-        }}
-      >
-        <AudioDots state={pillState} audioLevel={audioLevel} />
-        {label ? <span className="text-xs font-medium text-white">{label}</span> : null}
-      </motion.div>
-    </div>
+    <motion.div
+      className="flex max-w-full items-center justify-center gap-3 whitespace-nowrap rounded-full bg-black/95 select-none shadow-lg ring-1 ring-white/30"
+      animate={{
+        // ~1.4x growth from idle to active
+        paddingLeft: isActive ? 16 : 12,
+        paddingRight: isActive ? 16 : 12,
+        paddingTop: isActive ? 8 : 6,
+        paddingBottom: isActive ? 8 : 6,
+      }}
+      transition={{
+        duration: 0.25,
+        ease: "easeOut",
+      }}
+    >
+      <AudioDots state={pillState} audioLevel={audioLevel} />
+      {label ? (
+        <span className="max-w-[220px] truncate text-[13px] leading-none font-medium text-white">
+          {label}
+        </span>
+      ) : null}
+    </motion.div>
   );
 }

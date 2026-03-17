@@ -1,4 +1,5 @@
 use crate::audio::device_watcher::try_start_device_watcher_if_ready;
+#[cfg(not(target_os = "macos"))]
 use crate::commands::key_normalizer::{normalize_shortcut_keys, validate_key_combination};
 use crate::parakeet::ParakeetManager;
 use crate::whisper::languages::{validate_language, SUPPORTED_LANGUAGES};
@@ -415,6 +416,66 @@ pub async fn save_settings(app: AppHandle, settings: Settings) -> Result<(), Str
         *computer_use_guard = None;
     }
 
+    #[cfg(target_os = "macos")]
+    {
+        if let Err(e) = crate::recording::validate_macos_hotkey(&settings.computer_use_hotkey) {
+            return Err(format!("Invalid computer use hotkey: {}", e));
+        }
+
+        let use_custom =
+            crate::recording::macos_hotkey_requires_custom_listener(&settings.computer_use_hotkey);
+
+        if use_custom {
+            if !crate::recording::macos_input_monitoring_granted() {
+                let _ = crate::recording::request_macos_input_monitoring_access();
+                return Err(
+                    "Grant Input Monitoring in System Settings to use side-specific or modifier-only hotkeys on macOS.".to_string(),
+                );
+            }
+
+            crate::recording::init_macos_global_hotkey_listener(app.clone());
+            crate::recording::configure_macos_computer_use_hotkey(
+                &settings.computer_use_hotkey,
+            )
+            .map_err(|e| format!("Failed to configure computer use hotkey: {}", e))?;
+            log::info!(
+                "Configured macOS custom computer use hotkey: {}",
+                settings.computer_use_hotkey
+            );
+        } else {
+            crate::recording::configure_macos_computer_use_hotkey("")
+                .map_err(|e| format!("Failed to clear custom computer use hotkey: {}", e))?;
+
+            if !settings.computer_use_hotkey.trim().is_empty() {
+                let normalized_computer_use =
+                    crate::commands::key_normalizer::normalize_shortcut_keys(
+                        &settings.computer_use_hotkey,
+                    );
+                if let Ok(computer_use_shortcut) =
+                    normalized_computer_use.parse::<tauri_plugin_global_shortcut::Shortcut>()
+                {
+                    match shortcuts.register(computer_use_shortcut) {
+                        Ok(_) => {
+                            if let Ok(mut computer_use_guard) =
+                                app_state.computer_use_shortcut.lock()
+                            {
+                                *computer_use_guard = Some(computer_use_shortcut);
+                            }
+                            log::info!(
+                                "Computer use shortcut updated to: {}",
+                                settings.computer_use_hotkey
+                            );
+                        }
+                        Err(e) => {
+                            log::error!("Failed to register computer use shortcut: {}", e);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
     if !settings.computer_use_hotkey.trim().is_empty() {
         let normalized_computer_use =
             crate::commands::key_normalizer::normalize_shortcut_keys(&settings.computer_use_hotkey);
@@ -601,118 +662,246 @@ pub async fn set_global_shortcut(app: AppHandle, shortcut: String) -> Result<(),
         return Err("Invalid shortcut format".to_string());
     }
 
-    // Validate key combination
-    if let Err(e) = validate_key_combination(&shortcut) {
-        log::error!("Invalid key combination '{}': {}", shortcut, e);
-        return Err(format!("Invalid key combination: {}", e));
+    #[cfg(target_os = "macos")]
+    {
+        crate::recording::validate_macos_hotkey(&shortcut)
+            .map_err(|e| format!("Invalid key combination: {}", e))?;
+
+        let app_state = app.state::<AppState>();
+        let shortcuts = app.global_shortcut();
+        let use_custom = crate::recording::macos_hotkey_requires_custom_listener(&shortcut);
+
+        let old_shortcut = app_state
+            .recording_shortcut
+            .lock()
+            .ok()
+            .and_then(|guard| *guard);
+        if let Some(old) = old_shortcut {
+            let _ = shortcuts.unregister(old);
+        }
+        if let Ok(mut shortcut_guard) = app_state.recording_shortcut.lock() {
+            *shortcut_guard = None;
+        }
+
+        if use_custom {
+            if !crate::recording::macos_input_monitoring_granted() {
+                let _ = crate::recording::request_macos_input_monitoring_access();
+                return Err(
+                    "Grant Input Monitoring in System Settings to use side-specific or modifier-only hotkeys on macOS.".to_string(),
+                );
+            }
+
+            crate::recording::init_macos_global_hotkey_listener(app.clone());
+            crate::recording::configure_macos_recording_hotkey(&shortcut)
+                .map_err(|e| format!("Failed to configure hotkey: {}", e))?;
+        } else {
+            crate::recording::configure_macos_recording_hotkey("")
+                .map_err(|e| format!("Failed to clear custom hotkey: {}", e))?;
+
+            let normalized_shortcut =
+                crate::commands::key_normalizer::normalize_shortcut_keys(&shortcut);
+            let new_shortcut: Shortcut = normalized_shortcut.parse().map_err(|e| {
+                log::error!(
+                    "Failed to parse normalized shortcut '{}': {}",
+                    normalized_shortcut,
+                    e
+                );
+                "Invalid shortcut format".to_string()
+            })?;
+
+            let registration_result = shortcuts.register(new_shortcut);
+            match registration_result {
+                Ok(_) => {
+                    if let Ok(mut shortcut_guard) = app_state.recording_shortcut.lock() {
+                        *shortcut_guard = Some(new_shortcut);
+                    }
+                    log::info!("Successfully registered macOS global hotkey: {}", shortcut);
+                }
+                Err(e) => {
+                    let error_msg = e.to_string();
+                    let error_lower = error_msg.to_lowercase();
+                    let detailed_error = if error_lower.contains("already registered")
+                        || error_lower.contains("conflict")
+                        || error_lower.contains("in use")
+                    {
+                        "Hotkey is already in use by another application. Please choose a different combination.".to_string()
+                    } else if error_lower.contains("parse") || error_lower.contains("invalid") {
+                        "Invalid hotkey combination. Please use a valid key combination.".to_string()
+                    } else {
+                        format!("Failed to register hotkey: {}", e)
+                    };
+                    return Err(detailed_error);
+                }
+            }
+        }
+
+        let store = app.store("settings").map_err(|e| {
+            log::error!("Failed to get settings store: {}", e);
+            "Failed to access settings store".to_string()
+        })?;
+
+        store.set("hotkey", json!(shortcut));
+        if let Err(e) = store.save() {
+            log::error!("Failed to save settings: {}", e);
+            log::warn!("Shortcut configured but settings save failed");
+        }
+
+        log::info!("Successfully configured macOS custom hotkey: {}", shortcut);
+        return Ok(());
     }
 
-    // Normalize the shortcut keys
-    let normalized_shortcut = normalize_shortcut_keys(&shortcut);
-    log::debug!(
-        "Normalized shortcut: {} -> {}",
-        shortcut,
-        normalized_shortcut
-    );
+    #[cfg(not(target_os = "macos"))]
+    {
+        let parts: Vec<&str> = shortcut
+            .split('+')
+            .map(str::trim)
+            .filter(|part| !part.is_empty())
+            .collect();
 
-    // Validate that shortcut can be parsed
-    let new_shortcut: Shortcut = normalized_shortcut.parse().map_err(|e| {
-        log::error!(
-            "Failed to parse normalized shortcut '{}': {}",
-            normalized_shortcut,
-            e
+        let is_single_key = parts.len() == 1;
+        let is_single_modifier = is_single_key
+            && matches!(
+                parts[0].to_lowercase().as_str(),
+                "alt"
+                    | "shift"
+                    | "control"
+                    | "ctrl"
+                    | "command"
+                    | "cmd"
+                    | "meta"
+                    | "super"
+                    | "option"
+                    | "leftalt"
+                    | "rightalt"
+                    | "leftshift"
+                    | "rightshift"
+                    | "leftcontrol"
+                    | "rightcontrol"
+                    | "leftcommand"
+                    | "rightcommand"
+            );
+
+        if is_single_modifier {
+            return Err(
+                "Single modifier hotkeys are only supported on macOS in the current build."
+                    .to_string(),
+            );
+        }
+
+        if !is_single_key {
+            if let Err(e) = validate_key_combination(&shortcut) {
+                log::error!("Invalid key combination '{}': {}", shortcut, e);
+                return Err(format!("Invalid key combination: {}", e));
+            }
+        }
+
+        // Normalize the shortcut keys
+        let normalized_shortcut = normalize_shortcut_keys(&shortcut);
+        log::debug!(
+            "Normalized shortcut: {} -> {}",
+            shortcut,
+            normalized_shortcut
         );
-        "Invalid shortcut format".to_string()
-    })?;
 
-    // Get global shortcut manager and app state
-    let shortcuts = app.global_shortcut();
-    let app_state = app.state::<AppState>();
-
-    // Unregister only the current recording shortcut (not ESC or others)
-    log::debug!("Unregistering current recording shortcut if exists");
-    let old_shortcut = app_state
-        .recording_shortcut
-        .lock()
-        .ok()
-        .and_then(|guard| *guard);
-
-    if let Some(old) = old_shortcut {
-        log::debug!("Unregistering old shortcut: {:?}", old);
-        if let Err(e) = shortcuts.unregister(old) {
-            log::warn!(
-                "Failed to unregister old shortcut: {}. Continuing anyway.",
+        // Validate that shortcut can be parsed
+        let new_shortcut: Shortcut = normalized_shortcut.parse().map_err(|e| {
+            log::error!(
+                "Failed to parse normalized shortcut '{}': {}",
+                normalized_shortcut,
                 e
             );
-            // Don't fail - the old shortcut might already be unregistered
+            "Invalid shortcut format".to_string()
+        })?;
+
+        // Get global shortcut manager and app state
+        let shortcuts = app.global_shortcut();
+        let app_state = app.state::<AppState>();
+
+        // Unregister only the current recording shortcut (not ESC or others)
+        log::debug!("Unregistering current recording shortcut if exists");
+        let old_shortcut = app_state
+            .recording_shortcut
+            .lock()
+            .ok()
+            .and_then(|guard| *guard);
+
+        if let Some(old) = old_shortcut {
+            log::debug!("Unregistering old shortcut: {:?}", old);
+            if let Err(e) = shortcuts.unregister(old) {
+                log::warn!(
+                    "Failed to unregister old shortcut: {}. Continuing anyway.",
+                    e
+                );
+                // Don't fail - the old shortcut might already be unregistered
+            }
         }
+
+        // Register new shortcut immediately
+        log::debug!("Registering new shortcut: {}", normalized_shortcut);
+
+        // Attempt registration - according to docs, ANY error means hotkey won't work
+        let registration_result = shortcuts.register(new_shortcut);
+
+        match registration_result {
+            Ok(_) => {
+                log::info!("Successfully registered hotkey: {}", normalized_shortcut);
+                // Hotkey registered successfully, no conflicts
+            }
+            Err(e) => {
+                let error_msg = e.to_string();
+                let error_lower = error_msg.to_lowercase();
+
+                // According to tauri-plugin-global-shortcut docs:
+                // If register() returns an error, the shortcut is NOT functional
+                // Registration is atomic - it either succeeds completely or fails
+                log::error!("Failed to register hotkey '{}': {}", normalized_shortcut, e);
+
+                // Provide helpful error message based on error type
+                let detailed_error = if error_lower.contains("already registered")
+                    || error_lower.contains("conflict")
+                    || error_lower.contains("in use")
+                {
+                    "Hotkey is already in use by another application. Please choose a different combination.".to_string()
+                } else if error_lower.contains("parse") || error_lower.contains("invalid") {
+                    "Invalid hotkey combination. Please use a valid key combination.".to_string()
+                } else {
+                    format!("Failed to register hotkey: {}", e)
+                };
+
+                return Err(detailed_error);
+            }
+        }
+
+        // Update the recording shortcut in managed state regardless of registration warnings
+        match app_state.recording_shortcut.lock() {
+            Ok(mut shortcut_guard) => {
+                *shortcut_guard = Some(new_shortcut);
+                log::debug!("Updated recording shortcut state");
+            }
+            Err(e) => {
+                log::error!("Failed to acquire recording shortcut lock: {}", e);
+                // Continue anyway since the hotkey might be registered
+                log::warn!("Continuing despite lock failure");
+            }
+        }
+
+        // Save to settings (original version for display)
+        let store = app.store("settings").map_err(|e| {
+            log::error!("Failed to get settings store: {}", e);
+            "Failed to access settings store".to_string()
+        })?;
+
+        store.set("hotkey", json!(shortcut));
+        if let Err(e) = store.save() {
+            log::error!("Failed to save settings: {}", e);
+            // The shortcut is already registered, so this isn't a critical failure
+            log::warn!("Shortcut registered but settings save failed");
+        }
+
+        log::info!("Successfully updated global shortcut to: {}", shortcut);
+        Ok(())
     }
 
-    // Register new shortcut immediately
-    log::debug!("Registering new shortcut: {}", normalized_shortcut);
-
-    // Attempt registration - according to docs, ANY error means hotkey won't work
-    let registration_result = shortcuts.register(new_shortcut);
-
-    match registration_result {
-        Ok(_) => {
-            log::info!("Successfully registered hotkey: {}", normalized_shortcut);
-            // Hotkey registered successfully, no conflicts
-        }
-        Err(e) => {
-            let error_msg = e.to_string();
-            let error_lower = error_msg.to_lowercase();
-
-            // According to tauri-plugin-global-shortcut docs:
-            // If register() returns an error, the shortcut is NOT functional
-            // Registration is atomic - it either succeeds completely or fails
-            log::error!("Failed to register hotkey '{}': {}", normalized_shortcut, e);
-
-            // Provide helpful error message based on error type
-            let detailed_error = if error_lower.contains("already registered")
-                || error_lower.contains("conflict")
-                || error_lower.contains("in use")
-            {
-                "Hotkey is already in use by another application. Please choose a different combination.".to_string()
-            } else if error_lower.contains("parse") || error_lower.contains("invalid") {
-                "Invalid hotkey combination. Please use a valid key combination.".to_string()
-            } else {
-                format!("Failed to register hotkey: {}", e)
-            };
-
-            return Err(detailed_error);
-        }
-    }
-
-    // Update the recording shortcut in managed state regardless of registration warnings
-    match app_state.recording_shortcut.lock() {
-        Ok(mut shortcut_guard) => {
-            *shortcut_guard = Some(new_shortcut);
-            log::debug!("Updated recording shortcut state");
-        }
-        Err(e) => {
-            log::error!("Failed to acquire recording shortcut lock: {}", e);
-            // Continue anyway since the hotkey might be registered
-            log::warn!("Continuing despite lock failure");
-        }
-    }
-
-    // Save to settings (original version for display)
-    let store = app.store("settings").map_err(|e| {
-        log::error!("Failed to get settings store: {}", e);
-        "Failed to access settings store".to_string()
-    })?;
-
-    store.set("hotkey", json!(shortcut));
-    if let Err(e) = store.save() {
-        log::error!("Failed to save settings: {}", e);
-        // The shortcut is already registered, so this isn't a critical failure
-        log::warn!("Shortcut registered but settings save failed");
-    }
-
-    log::info!("Successfully updated global shortcut to: {}", shortcut);
-
-    Ok(())
 }
 
 #[derive(Serialize)]

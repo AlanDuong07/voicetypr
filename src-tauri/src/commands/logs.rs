@@ -30,12 +30,22 @@ pub async fn clear_old_logs(app: tauri::AppHandle, days_to_keep: u32) -> Result<
                 .unwrap_or("")
                 .to_string();
 
-            if file_name.starts_with("voicetypr-") && file_name.ends_with(".log") {
-                let date_str = file_name
+            let date_str = if file_name.starts_with("cyberdriver-") && file_name.ends_with(".log")
+            {
+                file_name
+                    .strip_prefix("cyberdriver-")
+                    .and_then(|s| s.strip_suffix(".log"))
+                    .unwrap_or("")
+            } else if file_name.starts_with("voicetypr-") && file_name.ends_with(".log") {
+                file_name
                     .strip_prefix("voicetypr-")
                     .and_then(|s| s.strip_suffix(".log"))
-                    .unwrap_or("");
+                    .unwrap_or("")
+            } else {
+                ""
+            };
 
+            if !date_str.is_empty() {
                 if let Ok(file_date) = NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
                     if file_date < cutoff_date {
                         fs::remove_file(&path)
