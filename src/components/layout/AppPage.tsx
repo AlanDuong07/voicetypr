@@ -51,7 +51,7 @@ export function AppPanel({ children, className }: AppPanelProps) {
   return (
     <div
       className={cn(
-        "rounded-xl border border-border bg-card p-6",
+        "liquid-surface rounded-xl border border-border p-6",
         className,
       )}
     >
@@ -102,7 +102,7 @@ export function AppChip({ children, className }: AppChipProps) {
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-md bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground",
+        "liquid-chip inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium text-muted-foreground",
         className,
       )}
     >

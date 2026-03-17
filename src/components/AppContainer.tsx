@@ -166,12 +166,12 @@ export function AppContainer() {
   }
 
   return (
-    <SidebarProvider className="min-h-screen bg-background">
+    <SidebarProvider className="min-h-screen">
       <Sidebar
         activeSection={activeSection}
         onSectionChange={setActiveSection}
       />
-      <SidebarInset className="bg-background">
+      <SidebarInset className="bg-transparent">
         <TabContainer
           activeSection={activeSection}
           onSectionChange={setActiveSection}

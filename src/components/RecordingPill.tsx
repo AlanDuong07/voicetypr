@@ -197,7 +197,7 @@ export function RecordingPill() {
 
   return (
     <motion.div
-      className="flex max-w-full items-center justify-center gap-3 whitespace-nowrap rounded-full bg-black/95 select-none shadow-lg ring-1 ring-white/30"
+      className="relative flex max-w-full items-center justify-center gap-3 whitespace-nowrap rounded-full border border-white/18 bg-[rgba(15,23,42,0.74)] text-white select-none shadow-[0_18px_50px_rgba(2,6,23,0.38),0_6px_18px_rgba(2,6,23,0.24)] before:pointer-events-none before:absolute before:inset-0 before:rounded-full before:content-[''] before:shadow-[inset_2px_2px_0_-1px_rgba(255,255,255,0.55),inset_0_1px_0_rgba(255,255,255,0.18)]"
       animate={{
         // ~1.4x growth from idle to active
         paddingLeft: isActive ? 16 : 12,
