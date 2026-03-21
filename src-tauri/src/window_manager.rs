@@ -7,6 +7,7 @@ use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindo
 
 pub const PILL_WINDOW_WIDTH: f64 = 360.0;
 pub const PILL_WINDOW_HEIGHT: f64 = 72.0;
+pub const PILL_WINDOW_MAX_HEIGHT: f64 = 220.0;
 
 #[derive(Debug, Clone)]
 pub struct WindowManager {
@@ -336,10 +337,17 @@ impl WindowManager {
             .set_always_on_top(true)
             .map_err(|e| e.to_string())?;
 
-        // Emit current recording state to the pill window
+        // Queue the current pill state and flush it shortly after creation.
+        // When the pill window is created lazily, emitting immediately here can race the
+        // frontend bootstrapping and leave the window blank until the next state change.
         let app_state = pill_window.app_handle().state::<crate::AppState>();
         let current_state = app_state.get_current_state();
-        let _ = pill_window.emit(
+        let voice_output_mode = app_state
+            .voice_output_mode
+            .lock()
+            .map(|guard| *guard)
+            .unwrap_or(crate::state::VoiceOutputMode::Dictation);
+        app_state.queue_pill_event(
             "recording-state-changed",
             serde_json::json!({
                 "state": match current_state {
@@ -349,6 +357,10 @@ impl WindowManager {
                     crate::RecordingState::Stopping => "stopping",
                     crate::RecordingState::Transcribing => "transcribing",
                     crate::RecordingState::Error => "error",
+                },
+                "voiceOutputMode": match voice_output_mode {
+                    crate::state::VoiceOutputMode::Dictation => "dictation",
+                    crate::state::VoiceOutputMode::ComputerUse => "computer_use",
                 },
                 "error": null
             }),
@@ -372,9 +384,11 @@ impl WindowManager {
             position_y
         );
 
-        // After creating the pill window, flush any queued critical events in the background
+        // After creating the pill window, flush queued events after a short delay so the
+        // frontend has time to mount its event listeners.
         let app_for_flush = self.app_handle.clone();
         tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
             crate::flush_pill_event_queue(&app_for_flush).await;
         });
 
@@ -736,6 +750,61 @@ impl WindowManager {
                 log::info!("Repositioned toast window to ({}, {})", toast_x, toast_y);
             }
         }
+    }
+
+    pub fn resize_pill_window(&self, height: f64) {
+        use tauri::{LogicalPosition, LogicalSize, Size};
+
+        let height = height.clamp(PILL_WINDOW_HEIGHT, PILL_WINDOW_MAX_HEIGHT);
+        let position = self.get_pill_position_setting();
+        let edge_offset = self.get_pill_offset_setting();
+        let (screen_width, screen_height) = self.get_screen_dimensions();
+        let pill_x = if position.ends_with("-left") {
+            edge_offset
+        } else if position.ends_with("-right") {
+            screen_width - PILL_WINDOW_WIDTH - edge_offset
+        } else {
+            (screen_width - PILL_WINDOW_WIDTH) / 2.0
+        };
+        let pill_y = if position.starts_with("top-") {
+            edge_offset
+        } else {
+            screen_height - height - edge_offset
+        };
+
+        if let Some(pill) = self.get_pill_window() {
+            if let Err(e) = pill.set_size(Size::Logical(LogicalSize::new(PILL_WINDOW_WIDTH, height)))
+            {
+                log::warn!("Failed to resize pill window: {}", e);
+            }
+            if let Err(e) = pill.set_position(LogicalPosition::new(pill_x, pill_y)) {
+                log::warn!("Failed to reposition resized pill window: {}", e);
+            }
+        }
+
+        if let Some(toast) = self.app_handle.get_webview_window("toast") {
+            let toast_width = 460.0;
+            let toast_height = 112.0;
+            let gap = 8.0;
+            let toast_x = pill_x + (PILL_WINDOW_WIDTH - toast_width) / 2.0;
+            let toast_y = if position.starts_with("top-") {
+                pill_y + height + gap
+            } else {
+                pill_y - toast_height - gap
+            };
+            if let Err(e) = toast.set_position(LogicalPosition::new(toast_x, toast_y)) {
+                log::warn!("Failed to reposition toast window after pill resize: {}", e);
+            }
+        }
+    }
+
+    pub fn focus_pill_window(&self) -> Result<(), String> {
+        let Some(pill_window) = self.get_pill_window() else {
+            return Err("Pill window not initialized".to_string());
+        };
+
+        pill_window.show().map_err(|e| e.to_string())?;
+        pill_window.set_focus().map_err(|e| e.to_string())
     }
 }
 

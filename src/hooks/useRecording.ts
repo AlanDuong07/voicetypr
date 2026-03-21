@@ -4,9 +4,11 @@ import { useCallback, useEffect, useState } from 'react';
 import { updateService } from '@/services/updateService';
 
 type RecordingState = 'idle' | 'starting' | 'recording' | 'stopping' | 'transcribing' | 'error';
+type VoiceOutputMode = 'dictation' | 'computer_use';
 
 interface UseRecordingReturn {
   state: RecordingState;
+  voiceOutputMode: VoiceOutputMode;
   error: string | null;
   startRecording: () => Promise<void>;
   stopRecording: () => Promise<void>;
@@ -15,18 +17,24 @@ interface UseRecordingReturn {
 
 export function useRecording(): UseRecordingReturn {
   const [state, setState] = useState<RecordingState>('idle');
+  const [voiceOutputMode, setVoiceOutputMode] = useState<VoiceOutputMode>('dictation');
   const [error, setError] = useState<string | null>(null);
 
   // Check initial state on mount by requesting current state
   useEffect(() => {
     const checkInitialState = async () => {
       try {
-        const currentState = await invoke<{ state: RecordingState; error: string | null }>('get_current_recording_state');
+        const currentState = await invoke<{
+          state: RecordingState;
+          voiceOutputMode?: VoiceOutputMode;
+          error: string | null;
+        }>('get_current_recording_state');
         if (!currentState || typeof currentState.state !== 'string') {
           return;
         }
         console.log('[Recording Hook] Initial state:', currentState);
         setState(currentState.state);
+        setVoiceOutputMode(currentState.voiceOutputMode || 'dictation');
         setError(currentState.error);
       } catch (err) {
         console.error('[Recording Hook] Failed to get initial state:', err);
@@ -44,6 +52,7 @@ export function useRecording(): UseRecordingReturn {
       unsubscribers.push(await listen('recording-state-changed', (event: any) => {
         console.log('[Recording Hook] State changed:', event.payload);
         setState(event.payload.state);
+        setVoiceOutputMode(event.payload.voiceOutputMode || 'dictation');
         setError(event.payload.error || null);
       }));
 
@@ -117,6 +126,7 @@ export function useRecording(): UseRecordingReturn {
 
   return {
     state,
+    voiceOutputMode,
     error,
     startRecording,
     stopRecording,

@@ -1,12 +1,12 @@
-//! Cross-platform media pause controller.
+//! Cross-platform media suppression controller.
 //!
-//! Pauses system media when recording starts and resumes when recording stops.
-//! Only resumes if WE paused it (not if user manually paused during recording).
+//! On macOS, mutes system output while recording and restores it afterward.
+//! On Windows, pauses compatible media sessions and resumes them afterward.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-
-#[cfg(target_os = "windows")]
-use std::sync::Mutex;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Mutex,
+};
 
 #[cfg(target_os = "macos")]
 use std::{
@@ -59,6 +59,33 @@ function run() {
 #[derive(Debug, Clone)]
 struct NowPlayingSnapshot {
     is_playing: Option<bool>,
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Debug, Clone, Copy)]
+struct MacosDuckState {
+    original_output_volume: u32,
+    original_output_muted: bool,
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct MacosOutputState {
+    output_volume: u32,
+    output_muted: bool,
+}
+
+#[cfg(target_os = "macos")]
+fn should_restore_macos_output_state(
+    current_state: Option<MacosOutputState>,
+    duck_state: MacosDuckState,
+) -> bool {
+    !matches!(
+        current_state,
+        Some(state)
+            if state.output_volume == duck_state.original_output_volume
+                && state.output_muted == duck_state.original_output_muted
+    )
 }
 
 #[cfg(target_os = "macos")]
@@ -128,10 +155,14 @@ fn now_playing_snapshot_via_osascript() -> Option<NowPlayingSnapshot> {
     Some(NowPlayingSnapshot { is_playing })
 }
 
-/// Controller for pausing/resuming system media during voice recording.
+/// Controller for temporarily quieting other media during voice recording.
 pub struct MediaPauseController {
-    /// Tracks if we paused the media (so we know whether to resume)
+    /// Tracks if we changed external media state (so we know whether to restore it)
     was_playing_before_recording: AtomicBool,
+
+    /// On macOS, remember the system output state we changed so we can restore it.
+    #[cfg(target_os = "macos")]
+    duck_state: Mutex<Option<MacosDuckState>>,
 
     /// On Windows, track which media session we paused so we only resume the same session.
     #[cfg(target_os = "windows")]
@@ -148,13 +179,15 @@ impl MediaPauseController {
     pub fn new() -> Self {
         Self {
             was_playing_before_recording: AtomicBool::new(false),
+            #[cfg(target_os = "macos")]
+            duck_state: Mutex::new(None),
             #[cfg(target_os = "windows")]
             paused_session_source_app_user_model_id: Mutex::new(None),
         }
     }
 
-    /// Pause media if currently playing. Call when recording starts.
-    /// Returns true if media was paused.
+    /// Quiet media if currently playing. Call when recording starts.
+    /// Returns true if media state was changed.
     pub fn pause_if_playing(&self) -> bool {
         #[cfg(target_os = "macos")]
         {
@@ -173,8 +206,8 @@ impl MediaPauseController {
         }
     }
 
-    /// Resume media if we paused it. Call when recording stops.
-    /// Returns true if media was resumed.
+    /// Restore media if we previously quieted it. Call when recording stops.
+    /// Returns true if media state was restored.
     pub fn resume_if_we_paused(&self) -> bool {
         if self
             .was_playing_before_recording
@@ -209,6 +242,11 @@ impl MediaPauseController {
         {
             *self.paused_session_source_app_user_model_id.lock().unwrap() = None;
         }
+
+        #[cfg(target_os = "macos")]
+        {
+            *self.duck_state.lock().unwrap() = None;
+        }
     }
 }
 
@@ -223,52 +261,153 @@ impl MediaPauseController {
             .unwrap_or(false);
 
         if !is_playing {
-            log::debug!("No media playing, nothing to pause");
+            log::debug!("No media playing, nothing to duck");
             self.was_playing_before_recording
                 .store(false, Ordering::SeqCst);
+            *self.duck_state.lock().unwrap() = None;
             return false;
         }
 
-        log::info!("🎵 Media is playing, pausing for recording...");
-
-        if toggle_media_playback_via_osascript() {
-            log::info!("✅ Media paused successfully");
-            self.was_playing_before_recording
-                .store(true, Ordering::SeqCst);
-            true
-        } else {
-            log::warn!("⚠️ Failed to pause media");
+        let Some(current_output_state) = get_system_output_state_via_osascript() else {
+            log::warn!("⚠️ Failed to read current output state for media suppression");
             self.was_playing_before_recording
                 .store(false, Ordering::SeqCst);
+            *self.duck_state.lock().unwrap() = None;
+            return false;
+        };
+
+        if current_output_state.output_muted {
+            log::debug!(
+                "System output is already muted at volume {}; skipping media suppression",
+                current_output_state.output_volume
+            );
+            self.was_playing_before_recording
+                .store(false, Ordering::SeqCst);
+            *self.duck_state.lock().unwrap() = None;
+            return false;
+        }
+
+        log::info!(
+            "🎵 Media is playing, muting system output while preserving volume at {} for recording...",
+            current_output_state.output_volume
+        );
+
+        if set_system_output_state_via_osascript(MacosOutputState {
+            output_volume: current_output_state.output_volume,
+            output_muted: true,
+        }) {
+            log::info!("✅ Media output muted successfully");
+            self.was_playing_before_recording
+                .store(true, Ordering::SeqCst);
+            *self.duck_state.lock().unwrap() = Some(MacosDuckState {
+                original_output_volume: current_output_state.output_volume,
+                original_output_muted: current_output_state.output_muted,
+            });
+            true
+        } else {
+            log::warn!("⚠️ Failed to mute media output");
+            self.was_playing_before_recording
+                .store(false, Ordering::SeqCst);
+            *self.duck_state.lock().unwrap() = None;
             false
         }
     }
 
     fn resume_macos(&self) -> bool {
-        if now_playing_snapshot_via_osascript()
-            .and_then(|s| s.is_playing)
-            .unwrap_or(false)
-        {
-            log::debug!("Media already playing (osascript), skipping resume");
+        let duck_state = *self.duck_state.lock().unwrap();
+        let Some(duck_state) = duck_state else {
+            log::debug!("No stored ducked volume state, skipping restore");
+            return false;
+        };
+
+        let current_output_state = get_system_output_state_via_osascript();
+        if !should_restore_macos_output_state(current_output_state, duck_state) {
+            log::debug!(
+                "System output state is already back at volume={} muted={}, clearing duck state",
+                duck_state.original_output_volume,
+                duck_state.original_output_muted
+            );
+            *self.duck_state.lock().unwrap() = None;
             return false;
         }
 
-        log::info!("🎵 Resuming media playback...");
-        if toggle_media_playback_via_osascript() {
-            log::info!("✅ Media resumed successfully");
+        if let Some(current_output_state) = current_output_state {
+            if current_output_state.output_volume != duck_state.original_output_volume
+                || current_output_state.output_muted != duck_state.original_output_muted
+            {
+                log::info!(
+                    "System output state changed during recording (current_volume={}, current_muted={}, original_volume={}, original_muted={}); restoring saved pre-recording state",
+                    current_output_state.output_volume,
+                    current_output_state.output_muted,
+                    duck_state.original_output_volume,
+                    duck_state.original_output_muted
+                );
+            }
+        }
+
+        log::info!(
+            "🎵 Restoring system output to volume={} muted={}...",
+            duck_state.original_output_volume,
+            duck_state.original_output_muted
+        );
+        if set_system_output_state_via_osascript(MacosOutputState {
+            output_volume: duck_state.original_output_volume,
+            output_muted: duck_state.original_output_muted,
+        }) {
+            log::info!("✅ Media output state restored successfully");
+            *self.duck_state.lock().unwrap() = None;
             true
         } else {
-            log::warn!("⚠️ Failed to resume media");
+            log::warn!("⚠️ Failed to restore media output state");
             false
         }
     }
 }
 
 #[cfg(target_os = "macos")]
-fn toggle_media_playback_via_osascript() -> bool {
+fn get_system_output_state_via_osascript() -> Option<MacosOutputState> {
     let output = ProcessCommand::new("/usr/bin/osascript")
         .arg("-e")
-        .arg("tell application \"System Events\" to key code 100")
+        .arg("set volume_settings to get volume settings")
+        .arg("-e")
+        .arg(
+            "return (output volume of volume_settings as string) & \",\" & (output muted of volume_settings as string)",
+        )
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        log::warn!("Failed to read system output state: {}", stderr);
+        return None;
+    }
+
+    let stdout = String::from_utf8(output.stdout).ok()?;
+    let mut parts = stdout.trim().splitn(2, ',');
+    let output_volume = parts.next()?.trim().parse::<u32>().ok()?.min(100);
+    let output_muted = match parts.next()?.trim() {
+        "true" => true,
+        "false" => false,
+        _ => return None,
+    };
+
+    Some(MacosOutputState {
+        output_volume,
+        output_muted,
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn set_system_output_state_via_osascript(state: MacosOutputState) -> bool {
+    let volume = state.output_volume.min(100);
+    let command = if state.output_muted {
+        format!("set volume with output muted output volume {}", volume)
+    } else {
+        format!("set volume without output muted output volume {}", volume)
+    };
+    let output = ProcessCommand::new("/usr/bin/osascript")
+        .arg("-e")
+        .arg(command)
         .output();
 
     match output {
@@ -277,7 +416,7 @@ fn toggle_media_playback_via_osascript() -> bool {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
             let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
             log::warn!(
-                "osascript media toggle failed | status={:?} stdout={:?} stderr={:?}",
+                "osascript set output state failed | status={:?} stdout={:?} stderr={:?}",
                 output.status,
                 stdout,
                 stderr
@@ -285,7 +424,7 @@ fn toggle_media_playback_via_osascript() -> bool {
             false
         }
         Err(err) => {
-            log::warn!("Failed to execute osascript media toggle: {}", err);
+            log::warn!("Failed to execute osascript set output state: {}", err);
             false
         }
     }
@@ -709,5 +848,56 @@ mod tests {
         for handle in handles {
             let _ = handle.join().unwrap();
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn should_restore_macos_output_state_when_still_muted() {
+        let duck_state = MacosDuckState {
+            original_output_volume: 65,
+            original_output_muted: false,
+        };
+
+        assert!(should_restore_macos_output_state(
+            Some(MacosOutputState {
+                output_volume: 65,
+                output_muted: true,
+            }),
+            duck_state
+        ));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn should_restore_macos_output_state_when_volume_changed_mid_recording() {
+        let duck_state = MacosDuckState {
+            original_output_volume: 65,
+            original_output_muted: false,
+        };
+
+        assert!(should_restore_macos_output_state(
+            Some(MacosOutputState {
+                output_volume: 30,
+                output_muted: false,
+            }),
+            duck_state
+        ));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn should_not_restore_macos_output_state_when_already_restored() {
+        let duck_state = MacosDuckState {
+            original_output_volume: 65,
+            original_output_muted: false,
+        };
+
+        assert!(!should_restore_macos_output_state(
+            Some(MacosOutputState {
+                output_volume: 65,
+                output_muted: false,
+            }),
+            duck_state
+        ));
     }
 }

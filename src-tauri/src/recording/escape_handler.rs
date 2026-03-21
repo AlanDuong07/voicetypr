@@ -27,6 +27,20 @@ pub async fn handle_escape_key_press(
     let current_state = get_recording_state(app_handle);
     log::debug!("Current recording state: {:?}", current_state);
 
+    if app_state
+        .computer_use_text_entry_active
+        .load(Ordering::SeqCst)
+    {
+        let app_for_cancel = app_handle.clone();
+        tauri::async_runtime::spawn(async move {
+            if let Err(e) = crate::commands::audio::cancel_computer_use_text_entry(app_for_cancel).await
+            {
+                log::error!("Failed to cancel computer-use text entry: {}", e);
+            }
+        });
+        return;
+    }
+
     // Only handle ESC during recording or transcribing
     if !matches!(
         current_state,

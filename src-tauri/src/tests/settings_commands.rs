@@ -17,6 +17,9 @@ mod tests {
         assert_eq!(settings.onboarding_step, "welcome");
         assert_eq!(settings.onboarding_version, 2);
         assert_eq!(settings.check_updates_automatically, true); // Default to true
+        assert_eq!(settings.pause_media_during_recording, true);
+        assert_eq!(settings.prefer_built_in_mic_when_bluetooth_output, true);
+        assert_eq!(settings.computer_use_typing_mode_enabled, true);
     }
 
     #[test]
@@ -37,6 +40,8 @@ mod tests {
             translate_to_english: false,
             check_updates_automatically: true,
             selected_microphone: None,
+            prefer_built_in_mic_when_bluetooth_output: true,
+            computer_use_typing_mode_enabled: true,
             recording_mode: "toggle".to_string(),
             use_different_ptt_key: false,
             ptt_hotkey: Some("Alt+Space".to_string()),
@@ -103,6 +108,8 @@ mod tests {
             translate_to_english: true,
             check_updates_automatically: true,
             selected_microphone: Some("USB Microphone".to_string()),
+            prefer_built_in_mic_when_bluetooth_output: false,
+            computer_use_typing_mode_enabled: false,
             recording_mode: "push_to_talk".to_string(),
             use_different_ptt_key: true,
             ptt_hotkey: Some("CommandOrControl+Space".to_string()),

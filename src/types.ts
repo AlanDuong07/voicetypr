@@ -77,8 +77,12 @@ export interface AppSettings {
   pill_indicator_position?: PillIndicatorPosition;
   // Pill indicator offset from screen edge in pixels (10-100)
   pill_indicator_offset?: number;
-  // Pause system media during recording
+  // Temporarily mute other media during recording
   pause_media_during_recording?: boolean;
+  // On macOS, prefer the built-in microphone when Bluetooth headphones are the output device
+  prefer_built_in_mic_when_bluetooth_output?: boolean;
+  // Allow computer-use hotkey sessions to switch into a typing composer in the floating toolbar
+  computer_use_typing_mode_enabled?: boolean;
 }
 
 export interface TranscriptionHistory {

@@ -53,6 +53,7 @@ pub struct AppState {
     pub ptt_shortcut: Arc<Mutex<Option<tauri_plugin_global_shortcut::Shortcut>>>,
     pub should_cancel_recording: Arc<AtomicBool>,
     pub pending_stop_after_start: Arc<AtomicBool>,
+    pub computer_use_text_entry_active: Arc<AtomicBool>,
     pub esc_pressed_once: Arc<AtomicBool>,
     pub esc_timeout_handle: Arc<Mutex<Option<tauri::async_runtime::JoinHandle<()>>>>,
     pub window_manager: Arc<Mutex<Option<WindowManager>>>,
@@ -83,6 +84,7 @@ impl AppState {
             ptt_shortcut: Arc::new(Mutex::new(None)),
             should_cancel_recording: Arc::new(AtomicBool::new(false)),
             pending_stop_after_start: Arc::new(AtomicBool::new(false)),
+            computer_use_text_entry_active: Arc::new(AtomicBool::new(false)),
             esc_pressed_once: Arc::new(AtomicBool::new(false)),
             esc_timeout_handle: Arc::new(Mutex::new(None)),
             window_manager: Arc::new(Mutex::new(None)),
@@ -245,6 +247,15 @@ pub fn update_recording_state(
             RecordingState::Stopping => "stopping",
             RecordingState::Transcribing => "transcribing",
             RecordingState::Error => "error",
+        },
+        "voiceOutputMode": match app_state
+            .voice_output_mode
+            .lock()
+            .map(|guard| *guard)
+            .unwrap_or(VoiceOutputMode::Dictation)
+        {
+            VoiceOutputMode::Dictation => "dictation",
+            VoiceOutputMode::ComputerUse => "computer_use",
         },
         "error": error
     });

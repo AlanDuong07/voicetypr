@@ -5,7 +5,7 @@ use crate::{
 };
 use crate::state::VoiceOutputMode;
 use std::sync::atomic::Ordering;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use tauri_plugin_global_shortcut::{Shortcut, ShortcutState};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -107,6 +107,13 @@ pub fn handle_hotkey_target(
             if event_state != ShortcutState::Pressed {
                 return;
             }
+            if app_state
+                .computer_use_text_entry_active
+                .load(Ordering::SeqCst)
+            {
+                let _ = app.emit("computer-use-submit-requested", ());
+                return;
+            }
             if let Ok(mut mode_guard) = app_state.voice_output_mode.lock() {
                 *mode_guard = VoiceOutputMode::ComputerUse;
             }
@@ -114,6 +121,12 @@ pub fn handle_hotkey_target(
             handle_toggle_mode(app, &app_state, current_state, event_state);
         }
         HotkeyTarget::Dictation => {
+            if app_state
+                .computer_use_text_entry_active
+                .swap(false, Ordering::SeqCst)
+            {
+                let _ = app.emit("computer-use-text-entry-cleared", ());
+            }
             if let Ok(mut mode_guard) = app_state.voice_output_mode.lock() {
                 *mode_guard = VoiceOutputMode::Dictation;
             }

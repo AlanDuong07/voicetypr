@@ -183,3 +183,25 @@ pub async fn focus_main_window(app: AppHandle) -> Result<(), String> {
 
     Ok(())
 }
+
+#[tauri::command]
+pub async fn focus_pill_widget(app: AppHandle) -> Result<(), String> {
+    let app_state = app.state::<AppState>();
+    let window_manager = app_state
+        .get_window_manager()
+        .ok_or("Window manager not initialized")?;
+
+    window_manager.focus_pill_window()?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn resize_pill_widget(app: AppHandle, height: f64) -> Result<(), String> {
+    let app_state = app.state::<AppState>();
+    let window_manager = app_state
+        .get_window_manager()
+        .ok_or("Window manager not initialized")?;
+
+    window_manager.resize_pill_window(height);
+    Ok(())
+}

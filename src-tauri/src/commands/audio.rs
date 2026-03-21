@@ -79,21 +79,40 @@ pub fn pill_toast(app: &AppHandle, message: &str, duration_ms: u64) {
     let _ = app.emit("toast", payload);
 }
 
+fn computer_task_endpoint_url(host: &str, port: u16, machine_id: &str) -> Result<String, String> {
+    let trimmed_host = host.trim();
+    if trimmed_host.is_empty() {
+        return Err("Cyberdriver host is missing.".to_string());
+    }
+
+    let protocol = if port == 443 { "https" } else { "http" };
+    let authority = match (protocol, port) {
+        ("https", 443) | ("http", 80) => trimmed_host.to_string(),
+        _ => format!("{trimmed_host}:{port}"),
+    };
+
+    Ok(format!(
+        "{protocol}://{authority}/v1/computer/{machine_id}/task"
+    ))
+}
+
 async fn submit_computer_use_task(app: &AppHandle, task: &str) -> Result<(), String> {
     let cyberdriver_settings = crate::cyberdriver::CyberdriverSettings::from_store(app)
         .map_err(|e| format!("Failed to load Cyberdriver settings: {e:?}"))?;
     let machine_id = crate::cyberdriver::current_machine_id()
         .map_err(|e| format!("Failed to resolve machine ID: {e:?}"))?;
+    let task_endpoint = computer_task_endpoint_url(
+        &cyberdriver_settings.host,
+        cyberdriver_settings.port,
+        &machine_id,
+    )?;
 
     if cyberdriver_settings.secret.trim().is_empty() {
         return Err("Cyberdesk API key is missing.".to_string());
     }
 
     reqwest::Client::new()
-        .post(format!(
-            "https://api.cyberdesk.io/v1/computer/{}/task",
-            machine_id
-        ))
+        .post(task_endpoint)
         .bearer_auth(cyberdriver_settings.secret)
         .json(task)
         .send()
@@ -109,6 +128,188 @@ async fn submit_computer_use_task(app: &AppHandle, task: &str) -> Result<(), Str
 
 fn should_hide_pill_when_idle(mode: &str) -> bool {
     mode != "always"
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RecordingEndMediaRestoreOrder {
+    RestoreMediaBeforeEndSound,
+    RestoreMediaAfterEndSound,
+}
+
+fn recording_end_media_restore_order() -> RecordingEndMediaRestoreOrder {
+    if cfg!(target_os = "macos") {
+        RecordingEndMediaRestoreOrder::RestoreMediaBeforeEndSound
+    } else {
+        RecordingEndMediaRestoreOrder::RestoreMediaAfterEndSound
+    }
+}
+
+#[cfg(target_os = "macos")]
+async fn wait_for_macos_audio_route_to_settle_after_recording_stop() {
+    // Bluetooth headsets can take a moment to switch back to playback mode after recording.
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+}
+
+#[cfg(not(target_os = "macos"))]
+async fn wait_for_macos_audio_route_to_settle_after_recording_stop() {}
+
+#[cfg(target_os = "macos")]
+fn is_likely_bluetooth_output_device_name(device_name: &str) -> bool {
+    let lower = device_name.to_lowercase();
+    [
+        "airpods",
+        "bluetooth",
+        "beats",
+        "bose",
+        "galaxy buds",
+        "jabra",
+        "pixel buds",
+        "quietcomfort",
+        "shokz",
+        "sony",
+        "wf-",
+        "wh-",
+    ]
+    .iter()
+    .any(|keyword| lower.contains(keyword))
+}
+
+#[cfg(target_os = "macos")]
+fn active_macos_bluetooth_output_device_name() -> Option<String> {
+    let host = cpal::default_host();
+    let output_name = host.default_output_device()?.name().ok()?;
+    is_likely_bluetooth_output_device_name(&output_name).then_some(output_name)
+}
+
+#[cfg(target_os = "macos")]
+fn macos_built_in_microphone_rank(device_name: &str) -> Option<u8> {
+    let lower = device_name.to_lowercase();
+
+    if lower.contains("built-in microphone") {
+        Some(0)
+    } else if lower.contains("macbook") && lower.contains("microphone") {
+        Some(1)
+    } else if lower.contains("studio display") && lower.contains("microphone") {
+        Some(2)
+    } else if lower.contains("imac") && lower.contains("microphone") {
+        Some(3)
+    } else if (lower.contains("built in")
+        || lower.contains("builtin")
+        || lower.contains("internal"))
+        && lower.contains("microphone")
+    {
+        Some(4)
+    } else {
+        None
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn choose_preferred_macos_built_in_microphone(candidate_names: &[String]) -> Option<String> {
+    let mut candidates = candidate_names
+        .iter()
+        .filter_map(|name| macos_built_in_microphone_rank(name).map(|rank| (rank, name.clone())))
+        .collect::<Vec<_>>();
+
+    candidates.sort_by(|(left_rank, left_name), (right_rank, right_name)| {
+        left_rank
+            .cmp(right_rank)
+            .then_with(|| left_name.cmp(right_name))
+    });
+
+    candidates.into_iter().next().map(|(_, name)| name)
+}
+
+#[cfg(target_os = "macos")]
+fn preferred_macos_built_in_microphone_for_active_output() -> Option<(String, String)> {
+    let output_device_name = active_macos_bluetooth_output_device_name()?;
+    let host = cpal::default_host();
+    let input_names = host
+        .input_devices()
+        .ok()?
+        .filter_map(|device| device.name().ok())
+        .collect::<Vec<_>>();
+    let microphone_name = choose_preferred_macos_built_in_microphone(&input_names)?;
+    Some((microphone_name, output_device_name))
+}
+
+fn resolve_recording_microphone_selection(settings: &Settings) -> Option<String> {
+    if let Some(mic) = settings.selected_microphone.clone() {
+        log::info!("Using selected microphone: {}", mic);
+        return Some(mic);
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        if settings.prefer_built_in_mic_when_bluetooth_output {
+            if let Some((microphone_name, output_device_name)) =
+                preferred_macos_built_in_microphone_for_active_output()
+            {
+                log::info!(
+                    "Using built-in microphone '{}' because Bluetooth output '{}' is active",
+                    microphone_name,
+                    output_device_name
+                );
+                return Some(microphone_name);
+            }
+
+            if let Some(output_device_name) = active_macos_bluetooth_output_device_name() {
+                log::warn!(
+                    "Bluetooth output '{}' is active but no built-in microphone was found; using default microphone",
+                    output_device_name
+                );
+            }
+        }
+    }
+
+    log::info!("Using default microphone");
+    None
+}
+
+fn active_voice_output_mode(app: &AppHandle) -> VoiceOutputMode {
+    app.state::<AppState>()
+        .voice_output_mode
+        .lock()
+        .map(|guard| *guard)
+        .unwrap_or(VoiceOutputMode::Dictation)
+}
+
+fn computer_use_typing_mode_enabled(
+    settings: Option<&Settings>,
+    output_mode: VoiceOutputMode,
+) -> bool {
+    matches!(output_mode, VoiceOutputMode::ComputerUse)
+        && settings
+            .map(|value| value.computer_use_typing_mode_enabled)
+            .unwrap_or(false)
+}
+
+fn is_computer_use_text_entry_active(app: &AppHandle) -> bool {
+    app.state::<AppState>()
+        .computer_use_text_entry_active
+        .load(std::sync::atomic::Ordering::SeqCst)
+}
+
+fn set_computer_use_text_entry_active(app: &AppHandle, active: bool) {
+    let app_state = app.state::<AppState>();
+    app_state
+        .computer_use_text_entry_active
+        .store(active, std::sync::atomic::Ordering::SeqCst);
+
+    let event_name = if active {
+        "computer-use-text-entry-activated"
+    } else {
+        "computer-use-text-entry-cleared"
+    };
+    let _ = app.emit(event_name, ());
+}
+
+async fn focus_computer_use_text_entry(app: &AppHandle) {
+    if let Some(pill_window) = app.get_webview_window("pill") {
+        let _ = pill_window.show();
+        let _ = pill_window.set_focus();
+        let _ = pill_window.emit("computer-use-text-entry-focus", ());
+    }
 }
 
 fn friendly_transcription_error_message(error: &str) -> String {
@@ -189,7 +390,12 @@ pub async fn should_hide_pill(app: &AppHandle) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::should_hide_pill_when_idle;
+    use super::{
+        computer_task_endpoint_url, recording_end_media_restore_order,
+        resolve_recording_microphone_selection, should_hide_pill_when_idle,
+        RecordingEndMediaRestoreOrder,
+    };
+    use crate::commands::settings::Settings;
 
     #[test]
     fn should_hide_pill_when_idle_for_never() {
@@ -204,6 +410,75 @@ mod tests {
     #[test]
     fn should_hide_pill_when_idle_for_always() {
         assert!(!should_hide_pill_when_idle("always"));
+    }
+
+    #[test]
+    fn recording_end_media_restore_order_matches_platform() {
+        #[cfg(target_os = "macos")]
+        assert_eq!(
+            recording_end_media_restore_order(),
+            RecordingEndMediaRestoreOrder::RestoreMediaBeforeEndSound
+        );
+
+        #[cfg(not(target_os = "macos"))]
+        assert_eq!(
+            recording_end_media_restore_order(),
+            RecordingEndMediaRestoreOrder::RestoreMediaAfterEndSound
+        );
+    }
+
+    #[test]
+    fn explicit_microphone_selection_is_preserved() {
+        let settings = Settings {
+            selected_microphone: Some("USB Podcast Mic".to_string()),
+            ..Settings::default()
+        };
+
+        assert_eq!(
+            resolve_recording_microphone_selection(&settings),
+            Some("USB Podcast Mic".to_string())
+        );
+    }
+
+    #[test]
+    fn computer_task_endpoint_uses_https_for_default_port() {
+        assert_eq!(
+            computer_task_endpoint_url("api.cyberdesk.io", 443, "machine-123").unwrap(),
+            "https://api.cyberdesk.io/v1/computer/machine-123/task"
+        );
+    }
+
+    #[test]
+    fn computer_task_endpoint_uses_configured_host_and_port() {
+        assert_eq!(
+            computer_task_endpoint_url("staging.cyberdesk.internal", 8443, "machine-123").unwrap(),
+            "http://staging.cyberdesk.internal:8443/v1/computer/machine-123/task"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn bluetooth_output_detection_matches_common_headsets() {
+        assert!(super::is_likely_bluetooth_output_device_name("AirPods Pro"));
+        assert!(super::is_likely_bluetooth_output_device_name(
+            "Bose QuietComfort Ultra"
+        ));
+        assert!(super::is_likely_bluetooth_output_device_name("Sony WH-1000XM5"));
+        assert!(!super::is_likely_bluetooth_output_device_name(
+            "MacBook Pro Speakers"
+        ));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn built_in_mic_selection_prefers_internal_devices() {
+        let selected = super::choose_preferred_macos_built_in_microphone(&[
+            "AirPods Pro Microphone".to_string(),
+            "MacBook Pro Microphone".to_string(),
+            "Built-in Microphone".to_string(),
+        ]);
+
+        assert_eq!(selected, Some("Built-in Microphone".to_string()));
     }
 }
 
@@ -707,13 +982,22 @@ pub async fn start_recording(
         return Err("Cannot start recording in current state".to_string());
     }
 
+    let voice_output_mode = active_voice_output_mode(&app);
+    let settings_for_recording = get_settings(app.clone()).await.ok();
+    let computer_use_typing_toolbar = computer_use_typing_mode_enabled(
+        settings_for_recording.as_ref(),
+        voice_output_mode,
+    );
+
+    set_computer_use_text_entry_active(&app, false);
+
     // Play sound on recording start if enabled
     if let Ok(store) = app.store("settings") {
         let play_sound = store
             .get("play_sound_on_recording")
             .and_then(|v| v.as_bool())
             .unwrap_or(true); // Default to true
-        if play_sound {
+        if play_sound && !computer_use_typing_toolbar {
             play_recording_start_sound();
             // Delay to let sound complete before microphone initialization
             // This helps with Bluetooth headsets (e.g., AirPods) that switch audio modes
@@ -802,23 +1086,11 @@ pub async fn start_recording(
     }
 
     // Get selected microphone from settings (before acquiring recorder lock)
-    let selected_microphone = match get_settings(app.clone()).await {
-        Ok(settings) => {
-            if let Some(mic) = settings.selected_microphone {
-                log::info!("Using selected microphone: {}", mic);
-                Some(mic)
-            } else {
-                log::info!("Using default microphone");
-                None
-            }
-        }
-        Err(e) => {
-            log::warn!(
-                "Failed to get settings for microphone selection: {}. Using default.",
-                e
-            );
-            None
-        }
+    let selected_microphone = if let Some(settings) = settings_for_recording.as_ref() {
+        resolve_recording_microphone_selection(settings)
+    } else {
+        log::warn!("Failed to get settings for microphone selection. Using default.");
+        None
     };
 
     // Start recording (scoped to release mutex before async operations)
@@ -1104,7 +1376,9 @@ pub async fn start_recording(
     }
 
     // Show pill widget if enabled and mode is not "never" (graceful degradation)
-    let should_show_pill = config.show_pill_widget && config.pill_indicator_mode != "never";
+    let should_show_pill =
+        (config.show_pill_widget && config.pill_indicator_mode != "never")
+            || computer_use_typing_toolbar;
     log::info!(
         "pill_visibility: start_recording show_pill_widget={} pill_indicator_mode='{}' should_show={}",
         config.show_pill_widget,
@@ -1125,6 +1399,10 @@ pub async fn start_recording(
                     "Recording indicator unavailable. Recording is still active.",
                 );
             }
+        }
+
+        if computer_use_typing_toolbar {
+            focus_computer_use_text_entry(&app).await;
         }
     } else if config.pill_indicator_mode == "never" {
         log::debug!("Pill widget hidden (pill_indicator_mode=never)");
@@ -1209,6 +1487,23 @@ pub async fn stop_recording(
     // Stop recording (lock only within this scope to stay Send)
     log::info!("🛑 Stopping recording...");
     let stop_message;
+    let voice_output_mode = active_voice_output_mode(&app);
+    let settings_for_stop = get_settings(app.clone()).await.ok();
+    let play_end_sound = if computer_use_typing_mode_enabled(
+        settings_for_stop.as_ref(),
+        voice_output_mode,
+    ) {
+        false
+    } else {
+        app.store("settings")
+            .ok()
+            .and_then(|store| {
+                store
+                    .get("play_sound_on_recording_end")
+                    .and_then(|v| v.as_bool())
+            })
+            .unwrap_or(true)
+    };
     {
         let mut recorder = state
             .inner()
@@ -1230,32 +1525,36 @@ pub async fn stop_recording(
             .map_err(|e| format!("Failed to stop recording: {}", e))?;
         log::info!("{}", stop_message);
 
-        // Play sound on recording end if enabled
-        if let Ok(store) = app.store("settings") {
-            let play_sound = store
-                .get("play_sound_on_recording_end")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(true); // Default to true
-            if play_sound {
-                play_recording_end_sound();
-            }
-        }
-
-        // Resume system media if we paused it
-        MEDIA_CONTROLLER.resume_if_we_paused();
-
-        // Monitor system resources after recording stop
-        #[cfg(debug_assertions)]
-        system_monitor::log_resources_after_operation(
-            "RECORDING_STOP",
-            stop_start.elapsed().as_millis() as u64,
-        );
-
         // Do not show "No sound detected" at stop time.
         // Silence auto-stop can happen after valid speech, and the transcription
         // result path below is the reliable place to decide whether the user
         // actually said nothing.
     } // MutexGuard dropped here BEFORE any await
+
+    wait_for_macos_audio_route_to_settle_after_recording_stop().await;
+
+    match recording_end_media_restore_order() {
+        RecordingEndMediaRestoreOrder::RestoreMediaBeforeEndSound => {
+            // On macOS the end cue uses `afplay`, so restore system volume first.
+            MEDIA_CONTROLLER.resume_if_we_paused();
+            if play_end_sound {
+                play_recording_end_sound();
+            }
+        }
+        RecordingEndMediaRestoreOrder::RestoreMediaAfterEndSound => {
+            if play_end_sound {
+                play_recording_end_sound();
+            }
+            MEDIA_CONTROLLER.resume_if_we_paused();
+        }
+    }
+
+    // Monitor system resources after recording stop
+    #[cfg(debug_assertions)]
+    system_monitor::log_resources_after_operation(
+        "RECORDING_STOP",
+        stop_start.elapsed().as_millis() as u64,
+    );
 
     let suppress_output_action_due_to_timeout =
         stop_message.contains("inactivity timeout");
@@ -2077,6 +2376,7 @@ pub async fn stop_recording(
                     });
 
                     // 6. Transition to idle state
+                    set_computer_use_text_entry_active(&app_for_process, false);
                     if let Ok(mut mode_guard) = app_state.voice_output_mode.lock() {
                         *mode_guard = VoiceOutputMode::Dictation;
                     }
@@ -2095,6 +2395,7 @@ pub async fn stop_recording(
                             log::error!("Failed to hide pill window on cancellation: {}", hide_err);
                         }
                     }
+                    set_computer_use_text_entry_active(&app_for_task, false);
                     update_recording_state(&app_for_task, RecordingState::Idle, None);
                 } else if e.contains("too short") {
                     // Handle "too short" errors with specific user feedback
@@ -2124,6 +2425,7 @@ pub async fn stop_recording(
                             }
                         }
 
+                        set_computer_use_text_entry_active(&app_for_reset, false);
                         update_recording_state(&app_for_reset, RecordingState::Idle, None);
                     });
                 } else {
@@ -2157,6 +2459,7 @@ pub async fn stop_recording(
                             }
                         }
 
+                        set_computer_use_text_entry_active(&app_for_reset, false);
                         update_recording_state(&app_for_reset, RecordingState::Idle, None);
                     });
                 }
@@ -2780,6 +3083,95 @@ async fn soniox_transcribe_async(
 }
 
 #[tauri::command]
+pub async fn begin_computer_use_text_entry(app: AppHandle) -> Result<(), String> {
+    let settings = get_settings(app.clone()).await?;
+    if !settings.computer_use_typing_mode_enabled {
+        return Err("Computer-use typing mode is disabled.".to_string());
+    }
+
+    {
+        let app_state = app.state::<AppState>();
+        if let Ok(mut mode_guard) = app_state.voice_output_mode.lock() {
+            *mode_guard = VoiceOutputMode::ComputerUse;
+        };
+    }
+
+    set_computer_use_text_entry_active(&app, true);
+
+    let current_state = crate::get_recording_state(&app);
+    if matches!(
+        current_state,
+        RecordingState::Recording
+            | RecordingState::Starting
+            | RecordingState::Stopping
+            | RecordingState::Transcribing
+    ) {
+        cancel_recording(app.clone()).await?;
+    }
+
+    crate::commands::window::show_pill_widget(app.clone()).await?;
+    focus_computer_use_text_entry(&app).await;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn cancel_computer_use_text_entry(app: AppHandle) -> Result<(), String> {
+    set_computer_use_text_entry_active(&app, false);
+
+    {
+        let app_state = app.state::<AppState>();
+        if let Ok(mut mode_guard) = app_state.voice_output_mode.lock() {
+            *mode_guard = VoiceOutputMode::Dictation;
+        };
+    }
+
+    let current_state = crate::get_recording_state(&app);
+    if matches!(
+        current_state,
+        RecordingState::Recording
+            | RecordingState::Starting
+            | RecordingState::Stopping
+            | RecordingState::Transcribing
+    ) {
+        cancel_recording(app).await?;
+        return Ok(());
+    }
+
+    if should_hide_pill(&app).await {
+        let _ = crate::commands::window::hide_pill_widget(app.clone()).await;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn submit_computer_use_text_task(app: AppHandle, task: String) -> Result<(), String> {
+    let trimmed_task = task.trim();
+    if trimmed_task.is_empty() {
+        return Err("Task is empty.".to_string());
+    }
+
+    match submit_computer_use_task(&app, trimmed_task).await {
+        Ok(_) => {
+            set_computer_use_text_entry_active(&app, false);
+            if let Ok(mut mode_guard) = app.state::<AppState>().voice_output_mode.lock() {
+                *mode_guard = VoiceOutputMode::Dictation;
+            }
+            Ok(())
+        }
+        Err(e) => {
+            log::error!("Failed to submit typed computer use task: {}", e);
+            pill_toast(&app, "Task submission failed", 1500);
+            let _ = app.emit(
+                "computer-task-failed",
+                serde_json::json!({ "error": e.clone() }),
+            );
+            Err(e)
+        }
+    }
+}
+
+#[tauri::command]
 pub async fn cancel_recording(app: AppHandle) -> Result<(), String> {
     log::info!("=== CANCEL RECORDING CALLED ===");
 
@@ -2834,6 +3226,10 @@ pub async fn cancel_recording(app: AppHandle) -> Result<(), String> {
         }
     }
 
+    if is_recording {
+        wait_for_macos_audio_route_to_settle_after_recording_stop().await;
+    }
+
     // Resume system media if we paused it
     MEDIA_CONTROLLER.resume_if_we_paused();
 
@@ -2860,7 +3256,7 @@ pub async fn cancel_recording(app: AppHandle) -> Result<(), String> {
     }
 
     // Hide pill window immediately (only if show_pill_indicator is false)
-    if should_hide_pill(&app).await {
+    if should_hide_pill(&app).await && !is_computer_use_text_entry_active(&app) {
         if let Err(e) = crate::commands::window::hide_pill_widget(app.clone()).await {
             log::error!("Failed to hide pill window: {}", e);
         }
@@ -2894,6 +3290,12 @@ pub async fn cancel_recording(app: AppHandle) -> Result<(), String> {
         _ => {
             // For other states (Idle, Error), try to transition to Idle
             update_recording_state(&app, RecordingState::Idle, None);
+        }
+    }
+
+    if !is_computer_use_text_entry_active(&app) {
+        if let Ok(mut mode_guard) = app_state.voice_output_mode.lock() {
+            *mode_guard = VoiceOutputMode::Dictation;
         }
     }
 
@@ -2963,6 +3365,8 @@ pub async fn clear_all_transcriptions(app: AppHandle) -> Result<(), String> {
 #[derive(serde::Serialize)]
 pub struct RecordingStateResponse {
     state: String,
+    #[serde(rename = "voiceOutputMode")]
+    voice_output_mode: String,
     error: Option<String>,
 }
 
@@ -2979,6 +3383,16 @@ pub fn get_current_recording_state(app: AppHandle) -> RecordingStateResponse {
             RecordingState::Stopping => "stopping",
             RecordingState::Transcribing => "transcribing",
             RecordingState::Error => "error",
+        }
+        .to_string(),
+        voice_output_mode: match app_state
+            .voice_output_mode
+            .lock()
+            .map(|guard| *guard)
+            .unwrap_or(VoiceOutputMode::Dictation)
+        {
+            VoiceOutputMode::Dictation => "dictation",
+            VoiceOutputMode::ComputerUse => "computer_use",
         }
         .to_string(),
         error: None,

@@ -12,6 +12,7 @@ import { Switch } from "@/components/ui/switch";
 import { useCyberdriver, type CyberdriverSettings, defaultCyberdriverSettings } from "@/contexts/CyberdriverContext";
 import { useSettings } from "@/contexts/SettingsContext";
 import { useCyberdriverPermissions } from "@/hooks/useCyberdriverPermissions";
+import { isMacOS } from "@/lib/platform";
 import { cn } from "@/lib/utils";
 import { invoke } from "@tauri-apps/api/core";
 import {
@@ -54,6 +55,10 @@ export function CyberdriverSettingsTab() {
   const [isSaving, setIsSaving] = useState(false);
   const [dictationHotkey, setDictationHotkey] = useState("");
   const [computerUseHotkey, setComputerUseHotkey] = useState("");
+  const [quietOtherMedia, setQuietOtherMedia] = useState(true);
+  const [preferBuiltInMicWhenBluetoothOutput, setPreferBuiltInMicWhenBluetoothOutput] =
+    useState(true);
+  const [computerUseTypingModeEnabled, setComputerUseTypingModeEnabled] = useState(true);
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
   useEffect(() => {
@@ -63,7 +68,18 @@ export function CyberdriverSettingsTab() {
   useEffect(() => {
     setDictationHotkey(appSettings?.hotkey || "CommandOrControl+Shift+Space");
     setComputerUseHotkey(appSettings?.computer_use_hotkey || "Option+Space");
-  }, [appSettings?.computer_use_hotkey, appSettings?.hotkey]);
+    setQuietOtherMedia(appSettings?.pause_media_during_recording ?? true);
+    setPreferBuiltInMicWhenBluetoothOutput(
+      appSettings?.prefer_built_in_mic_when_bluetooth_output ?? true,
+    );
+    setComputerUseTypingModeEnabled(appSettings?.computer_use_typing_mode_enabled ?? true);
+  }, [
+    appSettings?.computer_use_hotkey,
+    appSettings?.hotkey,
+    appSettings?.pause_media_during_recording,
+    appSettings?.prefer_built_in_mic_when_bluetooth_output,
+    appSettings?.computer_use_typing_mode_enabled,
+  ]);
 
   const canSave = useMemo(
     () =>
@@ -90,6 +106,9 @@ export function CyberdriverSettingsTab() {
         computer_use_hotkey: computerUseHotkey,
         recording_mode: "toggle",
         use_different_ptt_key: false,
+        pause_media_during_recording: quietOtherMedia,
+        prefer_built_in_mic_when_bluetooth_output: preferBuiltInMicWhenBluetoothOutput,
+        computer_use_typing_mode_enabled: computerUseTypingModeEnabled,
         onboarding_completed: true,
       });
       await saveSettings(draft, Boolean(status?.local_server_running || status?.tunnel_connected));
@@ -264,6 +283,26 @@ export function CyberdriverSettingsTab() {
                   <div>
                     <h3 className="text-sm font-medium text-foreground">Behavior</h3>
                     <div className="mt-3 space-y-1">
+                      <ToggleRow
+                        label="Mute Other Media While Recording"
+                        description="Mute other playing media while the mic is active, then restore the previous volume afterward."
+                        checked={quietOtherMedia}
+                        onChange={setQuietOtherMedia}
+                      />
+                      {isMacOS ? (
+                        <ToggleRow
+                          label="Prefer Mac Microphone With Bluetooth Headphones"
+                          description="When Bluetooth headphones are the active output device, use your Mac's built-in microphone by default to avoid low-quality headset mode. Turn this off if you want the system default input instead."
+                          checked={preferBuiltInMicWhenBluetoothOutput}
+                          onChange={setPreferBuiltInMicWhenBluetoothOutput}
+                        />
+                      ) : null}
+                      <ToggleRow
+                        label="Typing Mode For Computer Use"
+                        description="Let the computer-use hotkey open a subtle task composer. Start typing to switch from voice capture to a typed task, then press Enter or the hotkey again to submit."
+                        checked={computerUseTypingModeEnabled}
+                        onChange={setComputerUseTypingModeEnabled}
+                      />
                       <ToggleRow label="Keepalive" checked={draft.keepalive_enabled} onChange={(v) => setField("keepalive_enabled", v)} />
                       <ToggleRow label="Black Screen Recovery" checked={draft.black_screen_recovery} onChange={(v) => setField("black_screen_recovery", v)} />
                       <ToggleRow label="Debug Logging" checked={draft.debug} onChange={(v) => setField("debug", v)} />
@@ -326,16 +365,23 @@ function LabeledField({ label, children }: { label: string; children: ReactNode 
 
 function ToggleRow({
   label,
+  description,
   checked,
   onChange,
 }: {
   label: string;
+  description?: string;
   checked: boolean;
   onChange: (checked: boolean) => void;
 }) {
   return (
     <div className="flex items-center justify-between rounded-lg px-3 py-2.5 hover:bg-accent">
-      <span className="text-sm text-foreground">{label}</span>
+      <div className="pr-4">
+        <div className="text-sm text-foreground">{label}</div>
+        {description ? (
+          <div className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{description}</div>
+        ) : null}
+      </div>
       <Switch checked={checked} onCheckedChange={onChange} />
     </div>
   );

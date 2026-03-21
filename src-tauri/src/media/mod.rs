@@ -1,4 +1,4 @@
-//! Media control module for pausing/resuming system media during recording.
+//! Media control module for temporarily quieting other media during recording.
 //!
 //! Uses platform-specific APIs:
 //! - macOS: `media-remote` crate (MediaRemote.framework via Perl adapter)

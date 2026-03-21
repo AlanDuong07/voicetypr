@@ -1049,49 +1049,11 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                     (x, y)
                 };
 
-                // macOS: create pill window and convert to NSPanel
+                // macOS: the pill window is created lazily when needed.
+                // Pre-creating it at startup caused visibility/state sync issues.
                 #[cfg(target_os = "macos")]
                 {
-                    // Create the pill window - sized for 3 dots
-                    // Properties aligned with window_manager.rs for consistency
-                    let pill_builder = WebviewWindowBuilder::new(app, "pill", WebviewUrl::App("pill.html".into()))
-                        .title("Recording")
-                        .resizable(false)
-                        .maximizable(false)
-                        .minimizable(false)
-                        .decorations(false)
-                        .always_on_top(true)
-                        .visible_on_all_workspaces(true)
-                        .content_protected(true)
-                        .skip_taskbar(true)
-                        .transparent(true)
-                        .shadow(false)  // Prevent window shadow on macOS
-                        .inner_size(PILL_WINDOW_WIDTH, PILL_WINDOW_HEIGHT)
-                        .position(pos_x, pos_y)
-                        .visible(true)  // Always visible (controlled by show_pill_indicator setting)
-                        .focused(false);  // Don't steal focus
-
-                    // Disable context menu only in production builds
-                    #[cfg(not(debug_assertions))]
-                    let pill_builder = pill_builder.initialization_script("document.addEventListener('contextmenu', e => e.preventDefault());");
-
-                    #[cfg(debug_assertions)]
-                    let pill_builder = pill_builder;
-
-                    let pill_window = pill_builder.build()?;
-
-                    // Convert to NSPanel to prevent focus stealing
-                    use tauri_nspanel::WebviewWindowExt;
-                    pill_window.to_panel().map_err(|e| format!("Failed to convert to NSPanel: {:?}", e))?;
-
-                    // Store the pill window reference in WindowManager
-                    let app_state = app.state::<AppState>();
-                    if let Some(window_manager) = app_state.get_window_manager() {
-                        window_manager.set_pill_window(pill_window);
-                        log::info!("Created pill window as NSPanel and stored in WindowManager");
-                    } else {
-                        log::warn!("Could not store pill window reference - WindowManager not available");
-                    }
+                    log::info!("Pill window will be created lazily on first use");
                 }
 
                 // Create toast window for feedback messages (positioned above pill) - all platforms
@@ -1184,6 +1146,9 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             start_recording,
             stop_recording,
             cancel_recording,
+            begin_computer_use_text_entry,
+            cancel_computer_use_text_entry,
+            submit_computer_use_text_task,
             get_current_recording_state,
             debug_transcription_flow,
             test_transcription_event,
@@ -1216,6 +1181,8 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             show_pill_widget,
             hide_pill_widget,
             close_pill_widget,
+            focus_pill_widget,
+            resize_pill_widget,
             hide_toast_window,
             focus_main_window,
             get_permission_snapshot,

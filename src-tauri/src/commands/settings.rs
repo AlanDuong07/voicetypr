@@ -34,6 +34,10 @@ pub struct Settings {
     pub onboarding_version: u32,
     pub check_updates_automatically: bool,
     pub selected_microphone: Option<String>,
+    // On macOS, prefer the built-in microphone when Bluetooth headphones are the output device
+    pub prefer_built_in_mic_when_bluetooth_output: bool,
+    // Allow computer-use hotkey sessions to switch into a typing composer in the floating toolbar
+    pub computer_use_typing_mode_enabled: bool,
     // Push-to-talk support
     pub recording_mode: String, // "toggle" or "push_to_talk"
     pub use_different_ptt_key: bool,
@@ -48,7 +52,7 @@ pub struct Settings {
     pub pill_indicator_position: String,
     // Pill indicator offset from screen edge in pixels (10-100)
     pub pill_indicator_offset: u32,
-    // Pause system media during recording
+    // Temporarily mute other media during recording
     pub pause_media_during_recording: bool,
 }
 
@@ -70,6 +74,8 @@ impl Default for Settings {
             onboarding_version: CURRENT_ONBOARDING_VERSION,
             check_updates_automatically: true, // Default to automatic updates enabled
             selected_microphone: None,        // Default to system default microphone
+            prefer_built_in_mic_when_bluetooth_output: true,
+            computer_use_typing_mode_enabled: true,
             recording_mode: "toggle".to_string(), // Default to toggle mode for backward compatibility
             use_different_ptt_key: false,         // Default to using same key
             ptt_hotkey: Some("Alt+Space".to_string()), // Default PTT key
@@ -79,7 +85,7 @@ impl Default for Settings {
             pill_indicator_mode: "when_recording".to_string(), // Default to showing only when recording
             pill_indicator_position: "bottom-center".to_string(), // Default to bottom center of screen
             pill_indicator_offset: DEFAULT_INDICATOR_OFFSET,
-            pause_media_during_recording: !cfg!(target_os = "macos"),
+            pause_media_during_recording: true,
         }
     }
 }
@@ -220,6 +226,14 @@ pub async fn get_settings(app: AppHandle) -> Result<Settings, String> {
         selected_microphone: store
             .get("selected_microphone")
             .and_then(|v| v.as_str().map(|s| s.to_string())),
+        prefer_built_in_mic_when_bluetooth_output: store
+            .get("prefer_built_in_mic_when_bluetooth_output")
+            .and_then(|v| v.as_bool())
+            .unwrap_or_else(|| Settings::default().prefer_built_in_mic_when_bluetooth_output),
+        computer_use_typing_mode_enabled: store
+            .get("computer_use_typing_mode_enabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or_else(|| Settings::default().computer_use_typing_mode_enabled),
         recording_mode: store
             .get("recording_mode")
             .and_then(|v| v.as_str().map(|s| s.to_string()))
@@ -324,6 +338,14 @@ pub async fn save_settings(app: AppHandle, settings: Settings) -> Result<(), Str
         json!(settings.check_updates_automatically),
     );
     store.set("selected_microphone", json!(settings.selected_microphone));
+    store.set(
+        "prefer_built_in_mic_when_bluetooth_output",
+        json!(settings.prefer_built_in_mic_when_bluetooth_output),
+    );
+    store.set(
+        "computer_use_typing_mode_enabled",
+        json!(settings.computer_use_typing_mode_enabled),
+    );
 
     // Save push-to-talk settings
     store.set("recording_mode", json!(settings.recording_mode.clone()));
